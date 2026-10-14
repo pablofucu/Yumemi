@@ -4,10 +4,12 @@ package com.pablo.yumemi.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -96,6 +98,7 @@ fun ChatScreen(onBack: () -> Unit) {
     var showDetails by rememberSaveable { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
+    var statusOpen by rememberSaveable { mutableStateOf(true) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -220,6 +223,27 @@ fun ChatScreen(onBack: () -> Unit) {
                     .consumeWindowInsets(pad)
                     .imePadding(),
             ) {
+                // The empty state already shows her big, so the panel appears with the first message.
+                AnimatedVisibility(
+                    visible = state.messages.isNotEmpty() || errorText != null,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    StatusPanel(
+                        state = state,
+                        talking = talking,
+                        // Folds itself while reading older messages.
+                        expanded = statusOpen && atBottom,
+                        onToggle = {
+                            if (statusOpen && !atBottom) {
+                                stick = true
+                                scope.launch { listState.animateScrollToItem(0) }
+                            } else {
+                                statusOpen = !statusOpen
+                            }
+                        },
+                    )
+                }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     if (state.messages.isEmpty() && errorText == null) {
                         EmptyChat(state.mood, Modifier.align(Alignment.Center))
