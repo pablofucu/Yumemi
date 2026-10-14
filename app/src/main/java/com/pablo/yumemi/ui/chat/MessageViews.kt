@@ -100,21 +100,28 @@ fun AssistantMessage(
 ) {
     val blocks = remember(message.parts) { buildBlocks(message.parts) }
     val hasText = message.parts.any { it is MessagePart.Text && it.text.isNotBlank() }
+    val hasDetails = message.parts.any { it !is MessagePart.Text }
+    // Reasoning, commentary and actions stay folded behind one summary line; the status panel
+    // above the chat already says what she is doing live.
+    var showWork by remember(detailsExpanded) { mutableStateOf(detailsExpanded) }
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         SoftCard(Modifier.widthIn(max = 360.dp), shape = AssistantShape, elevation = 6.dp) {
             Column(
                 Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                if (hasDetails) {
+                    WorkSummary(message.parts, message.isStreaming, showWork) { showWork = !showWork }
+                }
                 blocks.forEach { b ->
                     when (b) {
-                        is Block.Actions -> ActionsGroup(b.parts, detailsExpanded)
+                        is Block.Actions -> if (showWork) ActionsGroup(b.parts, detailsExpanded)
                         is Block.Single -> when (val p = b.part) {
                             is MessagePart.Text ->
                                 if (p.text.isNotBlank()) Markdown(content = p.text)
-                            is MessagePart.Reasoning ->
+                            is MessagePart.Reasoning -> if (showWork)
                                 ReasoningSection(p.text, message.isStreaming && b.isLast, detailsExpanded)
-                            is MessagePart.Commentary ->
+                            is MessagePart.Commentary -> if (showWork)
                                 Text(
                                     p.text,
                                     style = MaterialTheme.typography.bodySmall,
@@ -134,6 +141,50 @@ fun AssistantMessage(
                 }
             }
         }
+    }
+}
+
+/** One-line "Razonamiento · 3 acciones" toggle for the folded work of a message. */
+@Composable
+private fun WorkSummary(parts: List<MessagePart>, streaming: Boolean, open: Boolean, onToggle: () -> Unit) {
+    val actions = parts.count { it is MessagePart.ToolCall || it is MessagePart.Subagent }
+    val failed = parts.count {
+        (it is MessagePart.ToolCall && it.status == ToolStatus.FAILED) ||
+            (it is MessagePart.Subagent && it.status == ToolStatus.FAILED)
+    }
+    val running = parts.any {
+        (it is MessagePart.ToolCall && it.status == ToolStatus.RUNNING) ||
+            (it is MessagePart.Subagent && it.status == ToolStatus.RUNNING)
+    }
+    val label = listOfNotNull(
+        "Razonamiento".takeIf { parts.any { it is MessagePart.Reasoning || it is MessagePart.Commentary } },
+        when (actions) {
+            0 -> null
+            1 -> "1 acción"
+            else -> "$actions acciones"
+        },
+        failed.takeIf { it > 0 }?.let { "$it con error" },
+    ).joinToString(" · ")
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onToggle)
+            .padding(vertical = 2.dp, horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (running || (streaming && !open)) {
+            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Yu.Periwinkle)
+        } else {
+            Icon(Icons.Rounded.Psychology, null, Modifier.size(15.dp), tint = Yu.Muted)
+        }
+        Spacer(Modifier.width(6.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (failed > 0) Yu.Danger else Yu.Muted,
+        )
+        Spacer(Modifier.width(2.dp))
+        Chevron(open)
     }
 }
 
