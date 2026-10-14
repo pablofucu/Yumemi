@@ -59,6 +59,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pablo.yumemi.AppViewModelProvider
 import com.pablo.yumemi.domain.ChatThread
 import com.pablo.yumemi.domain.ConnectionState
+import com.pablo.yumemi.domain.ThreadListUiState
 import com.pablo.yumemi.domain.YumemiMood
 import com.pablo.yumemi.ui.sprite.YumemiSprite
 import com.pablo.yumemi.ui.components.ConnectionChip
@@ -78,6 +79,28 @@ fun ThreadListScreen(
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refresh() }
 
+    ThreadListContent(
+        state = state,
+        onOpenChat = onOpenChat,
+        onOpenSettings = onOpenSettings,
+        onRefresh = vm::refresh,
+        onCreateThread = vm::createThread,
+        onRenameThread = vm::renameThread,
+        onDeleteThread = vm::deleteThread,
+    )
+}
+
+/** Stateless body of [ThreadListScreen], also used by the screenshot tests. */
+@Composable
+fun ThreadListContent(
+    state: ThreadListUiState,
+    onOpenChat: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+    onRefresh: () -> Unit,
+    onCreateThread: (onCreated: (String) -> Unit) -> Unit,
+    onRenameThread: (id: String, title: String) -> Unit,
+    onDeleteThread: (id: String) -> Unit,
+) {
     var creating by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<ChatThread?>(null) }
     var deleting by remember { mutableStateOf<ChatThread?>(null) }
@@ -101,7 +124,7 @@ fun ThreadListScreen(
                         Text("Conversaciones", fontWeight = FontWeight.Bold, color = Yu.Indigo)
                     },
                     actions = {
-                        ConnectionChip(state.connection, onClick = { vm.refresh() })
+                        ConnectionChip(state.connection, onClick = { onRefresh() })
                         IconButton(onClick = onOpenSettings) {
                             Icon(Icons.Rounded.Settings, contentDescription = "Ajustes", tint = Yu.PeriwinkleDeep)
                         }
@@ -117,7 +140,7 @@ fun ThreadListScreen(
                     onClick = {
                         if (!creating) {
                             creating = true
-                            vm.createThread { id ->
+                            onCreateThread { id ->
                                 creating = false
                                 onOpenChat(id)
                             }
@@ -133,7 +156,7 @@ fun ThreadListScreen(
         ) { pad ->
             PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
-                onRefresh = { vm.refresh() },
+                onRefresh = { onRefresh() },
                 modifier = Modifier.padding(top = pad.calculateTopPadding()).fillMaxSize(),
             ) {
                 LazyColumn(
@@ -197,7 +220,7 @@ fun ThreadListScreen(
         RenameDialog(
             initial = t.title,
             onDismiss = { renaming = null },
-            onConfirm = { vm.renameThread(t.id, it); renaming = null },
+            onConfirm = { onRenameThread(t.id, it); renaming = null },
         )
     }
     deleting?.let { t ->
@@ -208,7 +231,7 @@ fun ThreadListScreen(
             title = { Text("¿Eliminar conversación?", fontWeight = FontWeight.Bold) },
             text = { Text("«${t.title.ifBlank { "Sin título" }}» se borrará de forma permanente.") },
             confirmButton = {
-                TextButton(onClick = { vm.deleteThread(t.id); deleting = null }) {
+                TextButton(onClick = { onDeleteThread(t.id); deleting = null }) {
                     Text("Eliminar", color = Yu.Danger, fontWeight = FontWeight.SemiBold)
                 }
             },

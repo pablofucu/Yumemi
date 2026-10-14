@@ -59,6 +59,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pablo.yumemi.AppViewModelProvider
 import com.pablo.yumemi.domain.ConnectionState
+import com.pablo.yumemi.domain.SettingsUiState
 import com.pablo.yumemi.domain.YumemiMood
 import com.pablo.yumemi.ui.sprite.YumemiSprite
 import com.pablo.yumemi.ui.components.SoftCard
@@ -80,6 +81,34 @@ fun SettingsScreen(
     val state by vm.uiState.collectAsStateWithLifecycle()
     val useChat by vm.useChatCompletions.collectAsStateWithLifecycle()
 
+    SettingsContent(
+        state = state,
+        useChat = useChat,
+        canGoBack = canGoBack,
+        onBack = onBack,
+        onSaved = onSaved,
+        onBaseUrlChange = vm::onBaseUrlChange,
+        onApiKeyChange = vm::onApiKeyChange,
+        onTransportChange = vm::onTransportChange,
+        onTestConnection = vm::testConnection,
+        onSave = vm::save,
+    )
+}
+
+/** Stateless body of [SettingsScreen], also used by the screenshot tests. */
+@Composable
+fun SettingsContent(
+    state: SettingsUiState,
+    useChat: Boolean,
+    canGoBack: Boolean,
+    onBack: () -> Unit,
+    onSaved: () -> Unit,
+    onBaseUrlChange: (String) -> Unit,
+    onApiKeyChange: (String) -> Unit,
+    onTransportChange: (Boolean) -> Unit,
+    onTestConnection: () -> Unit,
+    onSave: () -> Unit,
+) {
     // Fire onSaved only for a false -> true transition seen while this screen is shown.
     var seenNotSaved by remember { mutableStateOf(!state.saved) }
     LaunchedEffect(state.saved) {
@@ -140,7 +169,7 @@ fun SettingsScreen(
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(
                             value = state.baseUrl,
-                            onValueChange = vm::onBaseUrlChange,
+                            onValueChange = onBaseUrlChange,
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("URL de Hermes") },
                             placeholder = {
@@ -155,7 +184,7 @@ fun SettingsScreen(
                         )
                         OutlinedTextField(
                             value = state.apiKey,
-                            onValueChange = vm::onApiKeyChange,
+                            onValueChange = onApiKeyChange,
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("Clave de API") },
                             singleLine = true,
@@ -201,7 +230,7 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             FilledTonalButton(
-                                onClick = { vm.testConnection() },
+                                onClick = { onTestConnection() },
                                 enabled = state.baseUrl.isNotBlank() && state.testResult != ConnectionState.Checking,
                                 shape = RoundedCornerShape(16.dp),
                                 colors = ButtonDefaults.filledTonalButtonColors(
@@ -241,12 +270,12 @@ fun SettingsScreen(
                             )
                         }
                         Spacer(Modifier.width(12.dp))
-                        Switch(checked = useChat, onCheckedChange = vm::onTransportChange)
+                        Switch(checked = useChat, onCheckedChange = onTransportChange)
                     }
                 }
 
                 Button(
-                    onClick = { vm.save() },
+                    onClick = { onSave() },
                     enabled = state.baseUrl.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                     shape = RoundedCornerShape(20.dp),

@@ -87,14 +87,37 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import com.pablo.yumemi.domain.YumemiMood
+import com.pablo.yumemi.domain.ChatUiState
 
 @Composable
 fun ChatScreen(onBack: () -> Unit) {
     val vm: ChatViewModel = viewModel(factory = AppViewModelProvider.Factory)
     val state by vm.uiState.collectAsStateWithLifecycle()
 
-    var showDetails by rememberSaveable { mutableStateOf(false) }
-    var input by rememberSaveable { mutableStateOf("") }
+    ChatContent(
+        state = state,
+        onBack = onBack,
+        onSend = vm::send,
+        onStop = vm::stop,
+        onRetry = vm::retryLast,
+        onClearError = vm::clearError,
+    )
+}
+
+/** Stateless body of [ChatScreen], also used by the screenshot tests. */
+@Composable
+fun ChatContent(
+    state: ChatUiState,
+    onBack: () -> Unit,
+    onSend: (String) -> Unit,
+    onStop: () -> Unit,
+    onRetry: () -> Unit,
+    onClearError: () -> Unit,
+    initialShowDetails: Boolean = false,
+    initialInput: String = "",
+) {
+    var showDetails by rememberSaveable { mutableStateOf(initialShowDetails) }
+    var input by rememberSaveable { mutableStateOf(initialInput) }
     var menuOpen by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
@@ -130,7 +153,7 @@ fun ChatScreen(onBack: () -> Unit) {
     val doSend = {
         val t = input.trim()
         if (t.isNotEmpty() && !state.isSending) {
-            vm.send(t)
+            onSend(t)
             input = ""
             stick = true
         }
@@ -235,8 +258,8 @@ fun ChatScreen(onBack: () -> Unit) {
                             item(key = "error") {
                                 ErrorCard(
                                     errorText,
-                                    onRetry = { vm.retryLast() },
-                                    onDismiss = { vm.clearError() },
+                                    onRetry = { onRetry() },
+                                    onDismiss = { onClearError() },
                                     modifier = Modifier.animateItem(),
                                 )
                             }
@@ -276,7 +299,7 @@ fun ChatScreen(onBack: () -> Unit) {
                     onValueChange = { input = it },
                     isSending = state.isSending,
                     onSend = { doSend() },
-                    onStop = { vm.stop() },
+                    onStop = { onStop() },
                 )
             }
         }
