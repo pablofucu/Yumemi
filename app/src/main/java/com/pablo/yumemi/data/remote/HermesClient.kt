@@ -5,12 +5,18 @@ import com.pablo.yumemi.data.chat.SessionParser
 import com.pablo.yumemi.data.settings.SettingsStore
 import com.pablo.yumemi.domain.ConnectionState
 import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLHandshakeException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
@@ -33,14 +39,14 @@ import okhttp3.Response
 class HermesClient(private val settings: SettingsStore) {
 
     private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    /** Streams never time out while reading (keepalive comments arrive every ~10 s). */
+    /** Keepalive comments arrive every ~10 s, so 45 s of silence means a dead socket. */
     private val streamHttp: OkHttpClient = http.newBuilder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .callTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
@@ -83,14 +89,46 @@ class HermesClient(private val settings: SettingsStore) {
         })
     }
 
+    /** Whether [e] may be retried: always for idempotent requests, else only when nothing was sent yet. */
+    private fun isRetryable(request: Request, e: IOException): Boolean {
+        if (request.method in IDEMPOTENT_METHODS || request.header("Idempotency-Key") != null) return true
+        // Handshake failures (e.g. tailscale serve fetching its cert lazily) happen before the request is sent.
+        return e is SSLHandshakeException ||
+            e is ConnectException ||
+            e is UnknownHostException ||
+            e is NoRouteToHostException ||
+            (e is SocketTimeoutException && e.message?.contains("connect", ignoreCase = true) == true)
+    }
+
+    /** Runs [block] up to 3 times (delays 800 ms, 2 s) while it fails with a retryable network error. */
+    private suspend fun <T> withRetry(request: Request, block: suspend () -> T): T {
+        var attempt = 0
+        var handshakeRetried = false
+        while (true) {
+            try {
+                return block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: HermesException.Unreachable) {
+                val cause = e.cause as? IOException ?: throw e
+                if (attempt >= RETRY_DELAYS_MS.size || !isRetryable(request, cause)) throw e
+                if (cause is SSLHandshakeException) {
+                    if (handshakeRetried) throw e
+                    handshakeRetried = true
+                }
+                delay(RETRY_DELAYS_MS[attempt++])
+            }
+        }
+    }
+
     /** Runs the request and returns the body of a 2xx response, mapping failures to [HermesException]. */
-    private suspend fun fetch(request: Request): String {
+    private suspend fun fetch(request: Request): String = withRetry(request) {
         val response = try {
             http.newCall(request).await()
         } catch (e: IOException) {
             throw HermesException.Unreachable(e)
         }
-        return response.use { r ->
+        response.use { r ->
             val text = try {
                 withContext(Dispatchers.IO) { r.body?.string().orEmpty() }
             } catch (e: IOException) {
@@ -105,13 +143,13 @@ class HermesClient(private val settings: SettingsStore) {
     }
 
     /** Only the HTTP status code; IO failures become [HermesException.Unreachable]. */
-    private suspend fun statusOf(request: Request): Int {
+    private suspend fun statusOf(request: Request): Int = withRetry(request) {
         val response = try {
             http.newCall(request).await()
         } catch (e: IOException) {
             throw HermesException.Unreachable(e)
         }
-        return response.use { it.code }
+        response.use { it.code }
     }
 
     // ---------- connection test ----------
@@ -144,7 +182,7 @@ class HermesClient(private val settings: SettingsStore) {
         } catch (e: HermesException) {
             e.toConnectionState() ?: ConnectionState.Unreachable(e.message ?: "No puedo conectar con Hermes")
         } catch (e: Exception) {
-            ConnectionState.Unreachable("No puedo conectar con Hermes")
+            e.toConnectionState() ?: ConnectionState.Unreachable("No puedo conectar con Hermes")
         }
     }
 
@@ -202,6 +240,50 @@ class HermesClient(private val settings: SettingsStore) {
             if (requestId.isNotBlank()) put("request_id", requestId)
         }.toString()
         fetch(current(listOf("v1", "runs", runId, "approval")).post(body.toRequestBody(jsonMedia)).build())
+    }
+
+    // ---------- runs ----------
+
+    /**
+     * Starts a run on the session and returns its run id. Re-posting with the same [idempotencyKey]
+     * returns the same run, so callers may retry on network errors. 404/405 -> [HermesException.RunsUnsupported].
+     */
+    suspend fun startRun(threadId: String, text: String, idempotencyKey: String): String {
+        val body = buildJsonObject {
+            put("input", text)
+            put("session_id", threadId)
+        }.toString()
+        val request = current(listOf("v1", "runs"))
+            .header("Idempotency-Key", idempotencyKey)
+            .post(body.toRequestBody(jsonMedia))
+            .build()
+        val resp = try {
+            fetch(request)
+        } catch (e: HermesException.Http) {
+            if (e.code == 404 || e.code == 405) throw HermesException.RunsUnsupported()
+            throw e
+        }
+        return parseJsonObject(resp)?.str("run_id") ?: throw HermesException.Protocol("ejecución sin id")
+    }
+
+    /** SSE of a run; [lastSeq] >= 0 resumes after that sequence number. HTTP 404 = the run is retired. */
+    fun runEvents(runId: String, lastSeq: Long): Flow<SseEvent> {
+        val rb = current(listOf("v1", "runs", runId, "events")).header("Accept", "text/event-stream")
+        if (lastSeq >= 0) rb.header("Last-Event-ID", lastSeq.toString())
+        return sse(rb.get().build())
+    }
+
+    /** Raw JSON body of GET /v1/runs/{id}. */
+    suspend fun runStatus(runId: String): String =
+        fetch(current(listOf("v1", "runs", runId)).get().build())
+
+    /** Best-effort stop; "not active" (409) and "unknown" (404) are fine. */
+    suspend fun stopRun(runId: String) {
+        try {
+            fetch(current(listOf("v1", "runs", runId, "stop")).post("".toRequestBody(jsonMedia)).build())
+        } catch (e: HermesException.Http) {
+            if (e.code != 409 && e.code != 404) throw e
+        }
     }
 
     // ---------- streaming ----------
@@ -266,5 +348,10 @@ class HermesClient(private val settings: SettingsStore) {
             call.cancel()
             reader.cancel()
         }
+    }
+
+    private companion object {
+        val IDEMPOTENT_METHODS = setOf("GET", "HEAD", "PATCH", "PUT", "DELETE")
+        val RETRY_DELAYS_MS = longArrayOf(800, 2_000)
     }
 }
