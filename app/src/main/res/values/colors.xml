@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="yumemi_bg">#EEF5FF</color>
+    <color name="yumemi_indigo">#2F3566</color>
+    <color name="yumemi_periwinkle">#7B7FE0</color>
+    <color name="ic_launcher_bg_top">#DDEBFF</color>
+    <color name="ic_launcher_bg_bottom">#E6DDFF</color>
+</resources>
