@@ -62,7 +62,7 @@ class HermesClient(private val settings: SettingsStore) {
         return rb
     }
 
-    private fun current(segments: List<String>, query: Map<String, String> = emptyMap()): Request.Builder =
+    internal fun current(segments: List<String>, query: Map<String, String> = emptyMap()): Request.Builder =
         builder(settings.baseUrl.value, settings.apiKey.value, segments, query)
 
     private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
@@ -84,7 +84,7 @@ class HermesClient(private val settings: SettingsStore) {
     }
 
     /** Runs the request and returns the body of a 2xx response, mapping failures to [HermesException]. */
-    private suspend fun fetch(request: Request): String {
+    internal suspend fun fetch(request: Request): String {
         val response = try {
             http.newCall(request).await()
         } catch (e: IOException) {
