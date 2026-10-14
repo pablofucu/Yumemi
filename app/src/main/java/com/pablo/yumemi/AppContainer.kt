@@ -3,6 +3,7 @@ package com.pablo.yumemi
 import android.content.Context
 import androidx.room.Room
 import com.pablo.yumemi.data.HermesRepository
+import com.pablo.yumemi.data.cron.CronRepository
 import com.pablo.yumemi.data.local.YumemiDatabase
 import com.pablo.yumemi.data.remote.HermesClient
 import com.pablo.yumemi.data.settings.SettingsStore
@@ -18,4 +19,5 @@ class AppContainer(context: Context) {
             .fallbackToDestructiveMigration()
             .build()
     val repository: HermesRepository = HermesRepository(client, database, settings)
+    val cronRepository: CronRepository = CronRepository(client, appContext)
 }
