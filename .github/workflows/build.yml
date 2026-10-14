@@ -20,7 +20,14 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          set -o pipefail
+          ./gradlew assembleDebug --console=plain 2>&1 | tee build.log
+
+      - name: Resumen de errores
+        if: failure()
+        run: |
+          echo "==== ERRORES ===="
+          grep -E "^e: |error:|What went wrong" -A3 build.log | sed 's#file:///home/runner/work/[^/]*/[^/]*/##' | head -150 || true
 
       - uses: actions/upload-artifact@v4
         with:

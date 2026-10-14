@@ -277,7 +277,7 @@ fun ChatContent(
                             }
                         }
                     }
-                    AnimatedVisibility(
+                    androidx.compose.animation.AnimatedVisibility(
                         visible = !atBottom,
                         modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
                         enter = fadeIn() + scaleIn(),
