@@ -185,7 +185,20 @@ object EventMapper {
                     ),
                 )
             }
-            "run.completed", "done" -> return listOf(StreamEvent.Completed)
+            "run.completed", "done" -> {
+                // Runs API: the terminal event carries the whole answer. FinalText is only applied
+                // when no answer text streamed, so it is harmless for the session stream.
+                val out = obj?.str("output")
+                return if (out.isNullOrBlank()) {
+                    listOf(StreamEvent.Completed)
+                } else {
+                    listOf(StreamEvent.FinalText(out), StreamEvent.Completed)
+                }
+            }
+            "run.interrupted" -> return listOf(
+                StreamEvent.Failed(errorText(obj) ?: "Hermes se reinició y cortó la respuesta"),
+            )
+            "replay.truncated" -> return listOf(StreamEvent.Unknown(type))
             "run.failed" -> return listOf(
                 StreamEvent.Failed(errorText(obj) ?: "La ejecución falló en Hermes"),
             )

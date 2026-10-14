@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pablo.yumemi.ui.chat.ChatViewModel
+import com.pablo.yumemi.ui.cron.CronViewModel
 import com.pablo.yumemi.ui.settings.SettingsViewModel
 import com.pablo.yumemi.ui.threads.ThreadListViewModel
 
@@ -14,15 +15,18 @@ object AppViewModelProvider {
     val Factory: ViewModelProvider.Factory = viewModelFactory {
         initializer {
             val c = yumemiApplication().container
-            ThreadListViewModel(c.repository, c.settings)
+            ThreadListViewModel(c.repository, c.settings, c.networkMonitor)
         }
         initializer {
             val c = yumemiApplication().container
-            ChatViewModel(createSavedStateHandle(), c.repository, c.client, c.settings)
+            ChatViewModel(createSavedStateHandle(), c.repository, c.turnRunner, c.settings, c.networkMonitor)
         }
         initializer {
             val c = yumemiApplication().container
             SettingsViewModel(c.client, c.settings)
+        }
+        initializer {
+            CronViewModel(yumemiApplication().container.cronRepository)
         }
     }
 }

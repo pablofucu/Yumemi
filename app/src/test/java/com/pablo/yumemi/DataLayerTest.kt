@@ -202,4 +202,57 @@ class DataLayerTest {
         EventMapper.mapSession(SseEvent("assistant.completed", "{\"content\":\"Listo\"}")).forEach { acc.apply(it) }
         assertEquals("Listo", (acc.parts.last() as MessagePart.Text).text)
     }
+
+    @Test
+    fun sseRecordsIdPerEvent() {
+        val evs = parseSse("id: 7\ndata: {\"a\":1}\n\ndata: x\n\n: keepalive\nid: 9\nevent: foo\ndata: y\n\n")
+        assertEquals(3, evs.size)
+        assertEquals("7", evs[0].id)
+        assertNull(evs[1].id)
+        assertEquals("9", evs[2].id)
+        assertEquals("foo", evs[2].event)
+    }
+
+    @Test
+    fun runCompletedCarriesOutputAsFinalText() {
+        val evs = EventMapper.mapSession(
+            SseEvent(null, "{\"event\":\"run.completed\",\"output\":\"Listo\",\"seq\":4}", "4"),
+        )
+        assertEquals(listOf(StreamEvent.FinalText("Listo"), StreamEvent.Completed), evs)
+
+        val acc = TurnAccumulator()
+        evs.forEach { acc.apply(it) }
+        assertTrue(acc.finished)
+        assertEquals(MessagePart.Text("Listo"), acc.parts.single())
+
+        // Streamed text wins over the final output.
+        val acc2 = TurnAccumulator()
+        acc2.apply(StreamEvent.TextDelta("Hola"))
+        evs.forEach { acc2.apply(it) }
+        assertEquals(MessagePart.Text("Hola"), acc2.parts.single())
+
+        assertEquals(
+            listOf(StreamEvent.Completed),
+            EventMapper.mapSession(SseEvent(null, "{\"event\":\"run.completed\",\"output\":\"\"}")),
+        )
+    }
+
+    @Test
+    fun runInterruptedAndTruncatedAndReasoning() {
+        assertEquals(
+            StreamEvent.Failed("apagado"),
+            EventMapper.mapSession(SseEvent(null, "{\"event\":\"run.interrupted\",\"error\":\"apagado\"}")).single(),
+        )
+        assertEquals(
+            StreamEvent.Failed("Hermes se reinició y cortó la respuesta"),
+            EventMapper.mapSession(SseEvent(null, "{\"event\":\"run.interrupted\"}")).single(),
+        )
+        assertTrue(
+            EventMapper.mapSession(SseEvent(null, "{\"event\":\"replay.truncated\"}")).single() is StreamEvent.Unknown,
+        )
+        assertEquals(
+            StreamEvent.ReasoningDelta("pienso"),
+            EventMapper.mapSession(SseEvent(null, "{\"event\":\"reasoning.available\",\"text\":\"pienso\"}")).single(),
+        )
+    }
 }

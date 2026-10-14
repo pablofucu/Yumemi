@@ -2,11 +2,12 @@ package com.pablo.yumemi.data.remote
 
 import okio.BufferedSource
 
-data class SseEvent(val event: String?, val data: String)
+data class SseEvent(val event: String?, val data: String, val id: String? = null)
 
 /** Incremental Server-Sent-Events parser working line by line. */
 class SseLineParser {
     private var event: String? = null
+    private var id: String? = null
     private val data = StringBuilder()
     private var hasData = false
 
@@ -27,12 +28,13 @@ class SseLineParser {
         }
         when (field) {
             "event" -> event = value
+            "id" -> id = value
             "data" -> {
                 if (hasData) data.append('\n')
                 data.append(value)
                 hasData = true
             }
-            else -> Unit // id, retry and unknown fields are ignored
+            else -> Unit // retry and unknown fields are ignored
         }
         return null
     }
@@ -43,10 +45,12 @@ class SseLineParser {
     private fun dispatch(): SseEvent? {
         if (!hasData) {
             event = null
+            id = null
             return null
         }
-        val ev = SseEvent(event, data.toString())
+        val ev = SseEvent(event, data.toString(), id)
         event = null
+        id = null
         data.setLength(0)
         hasData = false
         return ev

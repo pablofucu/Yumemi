@@ -125,6 +125,8 @@ class HermesRepository(
 
     suspend fun deleteMessage(id: String) = messageDao.delete(id)
 
+    suspend fun getMessage(id: String): ChatMessage? = messageDao.get(id)?.toDomain()
+
     /** Server transcript. A 404 (session unknown to the server) yields an empty list. */
     suspend fun fetchTranscript(threadId: String): List<ChatMessage> =
         try {
