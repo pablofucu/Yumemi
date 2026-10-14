@@ -8,9 +8,11 @@ import com.pablo.yumemi.data.chat.StreamEvent
 import com.pablo.yumemi.data.chat.TranscriptMerger
 import com.pablo.yumemi.data.chat.TurnAccumulator
 import com.pablo.yumemi.data.remote.HermesClient
+import com.pablo.yumemi.data.remote.HermesException
 import com.pablo.yumemi.data.remote.toConnectionState
 import com.pablo.yumemi.data.remote.toUserMessage
 import com.pablo.yumemi.data.settings.SettingsStore
+import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatMessage
 import com.pablo.yumemi.domain.ChatUiState
 import com.pablo.yumemi.domain.ConnectionState
@@ -87,6 +89,8 @@ class ChatViewModel(
     )
 
     private var streamJob: Job? = null
+    /** Accumulator of the current (or last) turn; approval answers update it in place. */
+    private var turn: TurnAccumulator? = null
     private var transientJob: Job? = null
 
     init {
@@ -98,6 +102,10 @@ class ChatViewModel(
         i.transient?.let { return it }
         if (i.isSending) {
             val parts = live?.parts.orEmpty()
+            // Waiting for the user's permission: she needs attention, not "working".
+            if (parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }) {
+                return YumemiMood.SURPRISED
+            }
             val working = parts.any {
                 (it is MessagePart.ToolCall && it.status == ToolStatus.RUNNING) ||
                     (it is MessagePart.Subagent && it.status == ToolStatus.RUNNING)
@@ -146,6 +154,48 @@ class ChatViewModel(
         internal.update { it.copy(error = null) }
     }
 
+    /** Sends the user's answer to a permission question Hermes is waiting on. */
+    fun answerApproval(requestId: String, choice: String) {
+        val acc = turn ?: return
+        val part = acc.parts.firstOrNull { it is MessagePart.Approval && it.requestId == requestId }
+            as? MessagePart.Approval ?: return
+        if (part.status != ApprovalStatus.PENDING) return
+        fun publish() {
+            // A newer turn owns inFlight now; this card was already stored with its turn.
+            if (turn === acc) inFlight.update { m -> m?.copy(parts = acc.parts) }
+        }
+        acc.setApproval(requestId, ApprovalStatus.SENDING, choice)
+        publish()
+        viewModelScope.launch {
+            try {
+                repo.answerApproval(part.runId, requestId, choice)
+                acc.setApproval(requestId, ApprovalStatus.ANSWERED, choice)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Shown on the card itself: the chat's error card would offer to resend the message.
+                val gone = (e as? HermesException.Http)?.code == 409 || acc.finished
+                if (gone) {
+                    // Hermes stopped waiting (timeout or the turn ended).
+                    acc.setApproval(requestId, ApprovalStatus.EXPIRED, null)
+                } else {
+                    // PENDING with an answer = the last attempt did not get through.
+                    acc.setApproval(requestId, ApprovalStatus.PENDING, choice)
+                }
+            }
+            publish()
+            if (acc.finished && turn === acc) {
+                // The turn already ended and was stored: store the card's final state too.
+                inFlight.value?.let { m ->
+                    try {
+                        repo.saveMessage(threadId, m)
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        }
+    }
+
     fun retryLast() {
         if (internal.value.isSending) return
         val msgs = uiState.value.messages
@@ -188,6 +238,7 @@ class ChatViewModel(
         transientJob?.cancel()
         val now = System.currentTimeMillis()
         val acc = TurnAccumulator(autoCompleteTools = settings.useChatCompletions.value)
+        turn = acc
         var assistant = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = Role.ASSISTANT,

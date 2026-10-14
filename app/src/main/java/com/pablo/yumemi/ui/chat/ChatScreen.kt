@@ -274,6 +274,7 @@ fun ChatScreen(onBack: () -> Unit) {
                                     detailsExpanded = showDetails,
                                     showInlineError = msg.id != lastMsg?.id,
                                     modifier = Modifier.animateItem(),
+                                    onApprovalChoice = vm::answerApproval,
                                 )
                             }
                         }

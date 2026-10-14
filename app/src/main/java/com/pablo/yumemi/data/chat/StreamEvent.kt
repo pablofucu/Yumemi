@@ -11,6 +11,7 @@ import com.pablo.yumemi.data.remote.truncated
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /** Transport-independent events of one assistant turn. */
 sealed interface StreamEvent {
@@ -31,6 +32,15 @@ sealed interface StreamEvent {
         val summary: String?,
         val ok: Boolean,
         val durationSec: Double?,
+    ) : StreamEvent
+    /** The whole answer as sent at the end of the turn; used when no answer text streamed. */
+    data class FinalText(val text: String) : StreamEvent
+    data class ApprovalRequested(
+        val runId: String,
+        val requestId: String,
+        val command: String,
+        val description: String,
+        val choices: List<String>,
     ) : StreamEvent
     data object Completed : StreamEvent
     data class Failed(val message: String) : StreamEvent
@@ -72,6 +82,28 @@ object EventMapper {
         return false
     }
 
+    private val DEFAULT_APPROVAL_CHOICES = listOf("once", "session", "always", "deny")
+
+    /** `approval.request`, emitted by both transports with the same payload. */
+    private fun approval(obj: JsonObject?): List<StreamEvent> {
+        if (obj == null) return emptyList()
+        val runId = obj.str("run_id") ?: return emptyList()
+        val choices = obj.arr("choices")
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
+            ?.filter { it.isNotBlank() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: DEFAULT_APPROVAL_CHOICES
+        return listOf(
+            StreamEvent.ApprovalRequested(
+                runId = runId,
+                requestId = obj.str("request_id") ?: "",
+                command = obj.str("command") ?: "",
+                description = obj.str("description") ?: "",
+                choices = choices,
+            ),
+        )
+    }
+
     fun mapSession(sse: SseEvent): List<StreamEvent> {
         val data = sse.data.trim()
         if (data == "[DONE]") return listOf(StreamEvent.Completed)
@@ -85,6 +117,22 @@ object EventMapper {
         }
 
         when (type) {
+            "approval.request" -> return approval(obj)
+            "tool.progress" -> {
+                // Reasoning arrives as a pseudo tool named "_thinking".
+                if (obj == null) return emptyList()
+                val name = obj.str("tool_name", "tool", "name").orEmpty()
+                if (!name.startsWith("_")) return emptyList()
+                val t = obj.str("delta", "text", "preview")
+                return if (t.isNullOrEmpty()) emptyList() else listOf(StreamEvent.ReasoningDelta(t))
+            }
+            "assistant.completed", "message.completed" -> {
+                val t = obj?.str("content", "text", "final_response")
+                return if (t.isNullOrBlank()) emptyList() else listOf(StreamEvent.FinalText(t))
+            }
+            "error" -> return listOf(
+                StreamEvent.Failed(errorText(obj) ?: "La ejecución falló en Hermes"),
+            )
             "assistant.delta", "message.delta" -> {
                 val t = obj?.str("delta", "text", "content", "token") ?: if (obj == null) sse.data else null
                 return if (t.isNullOrEmpty()) emptyList() else listOf(StreamEvent.TextDelta(t))
@@ -157,6 +205,8 @@ object EventMapper {
         if (data == "[DONE]") return listOf(StreamEvent.Completed)
         val eventName = sse.event?.lowercase().orEmpty()
         val obj = parseJsonObject(data)
+
+        if (eventName == "approval.request") return approval(obj)
 
         if (eventName.contains("tool")) {
             val tool: String

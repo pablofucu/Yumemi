@@ -193,6 +193,17 @@ class HermesClient(private val settings: SettingsStore) {
     suspend fun messagesBody(id: String): String =
         fetch(current(listOf("api", "sessions", id, "messages"), mapOf("inline_images" to "false")).get().build())
 
+    // ---------- approvals ----------
+
+    /** Answers a pending `approval.request` (choice: once, session, always or deny). */
+    suspend fun answerApproval(runId: String, requestId: String, choice: String) {
+        val body = buildJsonObject {
+            put("choice", choice)
+            if (requestId.isNotBlank()) put("request_id", requestId)
+        }.toString()
+        fetch(current(listOf("v1", "runs", runId, "approval")).post(body.toRequestBody(jsonMedia)).build())
+    }
+
     // ---------- streaming ----------
 
     fun streamSessionChat(threadId: String, text: String): Flow<SseEvent> {

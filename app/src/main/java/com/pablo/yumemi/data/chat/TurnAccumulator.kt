@@ -1,5 +1,6 @@
 package com.pablo.yumemi.data.chat
 
+import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.MessagePart
 import com.pablo.yumemi.domain.ToolStatus
 
@@ -132,6 +133,30 @@ class TurnAccumulator(private val autoCompleteTools: Boolean = false) {
                     )
                 }
             }
+            is StreamEvent.FinalText -> {
+                // Only when the answer never streamed (non-streaming providers, late failures).
+                if (list.none { it is MessagePart.Text && it.text.isNotBlank() }) {
+                    if (autoCompleteTools) finishRunning(list, ToolStatus.OK)
+                    list.add(MessagePart.Text(ev.text))
+                }
+            }
+            is StreamEvent.ApprovalRequested -> {
+                val known = ev.requestId.isNotEmpty() &&
+                    list.any { it is MessagePart.Approval && it.requestId == ev.requestId }
+                if (!known) {
+                    list.add(
+                        MessagePart.Approval(
+                            requestId = ev.requestId,
+                            runId = ev.runId,
+                            command = ev.command,
+                            description = ev.description,
+                            choices = ev.choices,
+                            status = ApprovalStatus.PENDING,
+                            answer = null,
+                        ),
+                    )
+                }
+            }
             StreamEvent.Completed -> {
                 finishRunning(list, ToolStatus.OK)
                 finished = true
@@ -152,6 +177,13 @@ class TurnAccumulator(private val autoCompleteTools: Boolean = false) {
         return toolAfterText
     }
 
+    /** Updates the approval card [requestId] after the user picked an option. */
+    fun setApproval(requestId: String, status: ApprovalStatus, answer: String?) {
+        parts = parts.map {
+            if (it is MessagePart.Approval && it.requestId == requestId) it.copy(status = status, answer = answer) else it
+        }
+    }
+
     /** Local failure (network error etc.) keeping what already arrived. */
     fun fail(message: String) {
         apply(StreamEvent.Failed(message))
@@ -167,6 +199,9 @@ class TurnAccumulator(private val autoCompleteTools: Boolean = false) {
             val p = list[i]
             if (p is MessagePart.ToolCall && p.status == ToolStatus.RUNNING) list[i] = p.copy(status = status)
             if (p is MessagePart.Subagent && p.status == ToolStatus.RUNNING) list[i] = p.copy(status = status)
+            if (p is MessagePart.Approval && p.status != ApprovalStatus.ANSWERED) {
+                list[i] = p.copy(status = ApprovalStatus.EXPIRED)
+            }
         }
     }
 }

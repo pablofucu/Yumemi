@@ -19,6 +19,9 @@ enum class Role { USER, ASSISTANT }
 
 enum class ToolStatus { RUNNING, OK, FAILED }
 
+/** PENDING waits for the user; SENDING while the answer is in flight; EXPIRED when the turn ended unanswered. */
+enum class ApprovalStatus { PENDING, SENDING, ANSWERED, EXPIRED }
+
 /** One piece of an assistant (or user) message, in the order it happened. */
 sealed interface MessagePart {
     data class Text(val text: String) : MessagePart
@@ -39,6 +42,19 @@ sealed interface MessagePart {
         val summary: String,
         val status: ToolStatus,
         val durationSec: Double?,
+    ) : MessagePart
+    /**
+     * Hermes paused before a dangerous command and asks for permission
+     * (`approval.request`). [choices] are wire values: once, session, always, deny.
+     */
+    data class Approval(
+        val requestId: String,
+        val runId: String,
+        val command: String,
+        val description: String,
+        val choices: List<String>,
+        val status: ApprovalStatus,
+        val answer: String?,
     ) : MessagePart
 }
 
@@ -105,6 +121,7 @@ data class SettingsUiState(
  *                         fun stop()
  *                         fun retryLast()
  *                         fun clearError()
+ *                         fun answerApproval(requestId: String, choice: String)
  *
  *  SettingsViewModel    : val uiState: StateFlow<SettingsUiState>
  *                         fun onBaseUrlChange(v: String); fun onApiKeyChange(v: String)

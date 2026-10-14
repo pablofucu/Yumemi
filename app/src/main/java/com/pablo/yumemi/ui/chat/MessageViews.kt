@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.m3.Markdown
+import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatMessage
 import com.pablo.yumemi.domain.MessagePart
 import com.pablo.yumemi.domain.ToolStatus
@@ -97,10 +98,11 @@ fun AssistantMessage(
     detailsExpanded: Boolean,
     showInlineError: Boolean,
     modifier: Modifier = Modifier,
+    onApprovalChoice: (requestId: String, choice: String) -> Unit = { _, _ -> },
 ) {
     val blocks = remember(message.parts) { buildBlocks(message.parts) }
     val hasText = message.parts.any { it is MessagePart.Text && it.text.isNotBlank() }
-    val hasDetails = message.parts.any { it !is MessagePart.Text }
+    val hasDetails = message.parts.any { it !is MessagePart.Text && it !is MessagePart.Approval }
     // Reasoning, commentary and actions stay folded behind one summary line; the status panel
     // above the chat already says what she is doing live.
     var showWork by remember(detailsExpanded) { mutableStateOf(detailsExpanded) }
@@ -127,11 +129,14 @@ fun AssistantMessage(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Yu.Muted,
                                 )
+                            // Never folded: Hermes is waiting on the answer.
+                            is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
                             else -> Unit
                         }
                     }
                 }
-                if (message.isStreaming && !hasText) TypingDots()
+                val waiting = message.parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }
+                if (message.isStreaming && !hasText && !waiting) TypingDots()
                 if (showInlineError && message.error != null) {
                     Text(
                         message.error,

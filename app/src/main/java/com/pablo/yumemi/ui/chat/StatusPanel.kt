@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatUiState
 import com.pablo.yumemi.domain.ConnectionState
 import com.pablo.yumemi.domain.MessagePart
@@ -61,6 +62,9 @@ private fun statusText(state: ChatUiState, talking: Boolean): StatusText {
         0 -> null
         1 -> "1 acción"
         else -> "$actions acciones"
+    }
+    parts.lastOrNull { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }?.let {
+        return StatusText("Necesito tu permiso", (it as MessagePart.Approval).command.lineSequence().firstOrNull()?.trim(), mono = true)
     }
     return when (state.mood) {
         YumemiMood.WORKING -> {
