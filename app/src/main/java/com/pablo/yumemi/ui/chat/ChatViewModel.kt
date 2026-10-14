@@ -4,13 +4,10 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pablo.yumemi.data.HermesRepository
-import com.pablo.yumemi.data.chat.StreamEvent
 import com.pablo.yumemi.data.chat.TranscriptMerger
-import com.pablo.yumemi.data.chat.TurnAccumulator
-import com.pablo.yumemi.data.remote.HermesClient
-import com.pablo.yumemi.data.remote.HermesException
+import com.pablo.yumemi.data.chat.TurnRunner
+import com.pablo.yumemi.data.remote.NetworkMonitor
 import com.pablo.yumemi.data.remote.toConnectionState
-import com.pablo.yumemi.data.remote.toUserMessage
 import com.pablo.yumemi.data.settings.SettingsStore
 import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatMessage
@@ -21,27 +18,24 @@ import com.pablo.yumemi.domain.Role
 import com.pablo.yumemi.domain.ToolStatus
 import com.pablo.yumemi.domain.YumemiMood
 import com.pablo.yumemi.ui.threads.withDisplayTitle
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class ChatViewModel(
     savedStateHandle: SavedStateHandle,
     private val repo: HermesRepository,
-    private val client: HermesClient,
+    private val runner: TurnRunner,
     private val settings: SettingsStore,
+    network: NetworkMonitor,
 ) : ViewModel() {
 
     private val threadId: String = savedStateHandle.get<String>("threadId").orEmpty()
@@ -88,13 +82,21 @@ class ChatViewModel(
         ChatUiState(threadId = threadId, connection = internal.value.connection),
     )
 
-    private var streamJob: Job? = null
-    /** Accumulator of the current (or last) turn; approval answers update it in place. */
-    private var turn: TurnAccumulator? = null
     private var transientJob: Job? = null
+    /** finishedAt of a finished turn whose error card the user dismissed (or that predates this screen). */
+    private var dismissedAt: Long? = null
 
     init {
+        observeLiveTurn()
         loadTranscript()
+        // Re-attach to a run that was in flight when the process died.
+        runner.resumePending(threadId)
+        // The VPN often comes up after the radio: reload as soon as a network (re)appears.
+        viewModelScope.launch {
+            network.availableTick.drop(1).collect {
+                if (internal.value.connection !is ConnectionState.Connected) loadTranscript()
+            }
+        }
     }
 
     private fun computeMood(i: Internal, live: ChatMessage?): YumemiMood {
@@ -142,62 +144,26 @@ class ChatViewModel(
 
     fun send(text: String) {
         val t = text.trim()
-        if (t.isEmpty() || internal.value.isSending) return
+        if (t.isEmpty() || runner.isRunning(threadId)) return
         startTurn(t)
     }
 
     fun stop() {
-        streamJob?.cancel()
+        runner.stop(threadId)
     }
 
     fun clearError() {
+        dismissedAt = runner.observe(threadId).value?.finishedAt
         internal.update { it.copy(error = null) }
     }
 
     /** Sends the user's answer to a permission question Hermes is waiting on. */
     fun answerApproval(requestId: String, choice: String) {
-        val acc = turn ?: return
-        val part = acc.parts.firstOrNull { it is MessagePart.Approval && it.requestId == requestId }
-            as? MessagePart.Approval ?: return
-        if (part.status != ApprovalStatus.PENDING) return
-        fun publish() {
-            // A newer turn owns inFlight now; this card was already stored with its turn.
-            if (turn === acc) inFlight.update { m -> m?.copy(parts = acc.parts) }
-        }
-        acc.setApproval(requestId, ApprovalStatus.SENDING, choice)
-        publish()
-        viewModelScope.launch {
-            try {
-                repo.answerApproval(part.runId, requestId, choice)
-                acc.setApproval(requestId, ApprovalStatus.ANSWERED, choice)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Shown on the card itself: the chat's error card would offer to resend the message.
-                val gone = (e as? HermesException.Http)?.code == 409 || acc.finished
-                if (gone) {
-                    // Hermes stopped waiting (timeout or the turn ended).
-                    acc.setApproval(requestId, ApprovalStatus.EXPIRED, null)
-                } else {
-                    // PENDING with an answer = the last attempt did not get through.
-                    acc.setApproval(requestId, ApprovalStatus.PENDING, choice)
-                }
-            }
-            publish()
-            if (acc.finished && turn === acc) {
-                // The turn already ended and was stored: store the card's final state too.
-                inFlight.value?.let { m ->
-                    try {
-                        repo.saveMessage(threadId, m)
-                    } catch (_: Exception) {
-                    }
-                }
-            }
-        }
+        runner.answerApproval(threadId, requestId, choice)
     }
 
     fun retryLast() {
-        if (internal.value.isSending) return
+        if (runner.isRunning(threadId)) return
         val msgs = uiState.value.messages
         val userIdx = msgs.indexOfLast { it.role == Role.USER }
         if (userIdx < 0) return
@@ -209,17 +175,62 @@ class ChatViewModel(
         internal.update { it.copy(isSending = true, error = null, transient = null) }
         viewModelScope.launch {
             if (failed) {
+                runner.clear(threadId)
                 inFlight.value = null
                 if (after != null) repo.deleteMessage(after.id)
                 repo.deleteMessage(user.id)
             }
-            streamJob = launch { runTurn(text) }
+            runner.start(threadId, text)
         }
     }
 
     private fun startTurn(text: String) {
         internal.update { it.copy(isSending = true, error = null, transient = null) }
-        streamJob = viewModelScope.launch { runTurn(text) }
+        runner.start(threadId, text)
+    }
+
+    /** Mirrors the app-level turn into UI state; the turn itself keeps running without this screen. */
+    private fun observeLiveTurn() {
+        viewModelScope.launch {
+            var first = true
+            var wasRunning = false
+            var lastTools = 0
+            runner.observe(threadId).collect { live ->
+                if (first) {
+                    first = false
+                    // A turn that finished before this screen existed is already stored: don't replay it.
+                    if (live != null && !live.running) dismissedAt = live.finishedAt
+                    lastTools = live?.toolAfterTextCount ?: 0
+                }
+                if (live == null) {
+                    inFlight.value = null
+                    wasRunning = false
+                    return@collect
+                }
+                val stale = !live.running && live.finishedAt != null && live.finishedAt == dismissedAt && !wasRunning
+                val shown = live.running || live.message.parts.isNotEmpty() || live.message.error != null
+                inFlight.value = if (shown && !stale) live.message else null
+                val error = if (!live.running && live.finishedAt != dismissedAt) live.error else null
+                internal.update { it.copy(isSending = live.running, error = error) }
+
+                if (live.toolAfterTextCount < lastTools) lastTools = live.toolAfterTextCount
+                if (live.toolAfterTextCount > lastTools) {
+                    lastTools = live.toolAfterTextCount
+                    flash(YumemiMood.SURPRISED, 1_500)
+                }
+                if (live.running) {
+                    wasRunning = true
+                } else if (wasRunning) {
+                    wasRunning = false
+                    if (live.succeeded) {
+                        internal.update { it.copy(connection = ConnectionState.Connected) }
+                        flash(YumemiMood.HAPPY, 3_000)
+                    }
+                    // Even after a failure the server may still hold the answer.
+                    loadTranscript()
+                }
+            }
+        }
     }
 
     private fun flash(mood: YumemiMood, millis: Long) {
@@ -228,91 +239,6 @@ class ChatViewModel(
             internal.update { it.copy(transient = mood) }
             delay(millis)
             internal.update { it.copy(transient = null) }
-        }
-    }
-
-    private fun isTerminal(ev: StreamEvent): Boolean =
-        ev is StreamEvent.Completed || ev is StreamEvent.Failed || ev is StreamEvent.Cancelled
-
-    private suspend fun runTurn(text: String) {
-        transientJob?.cancel()
-        val now = System.currentTimeMillis()
-        val acc = TurnAccumulator(autoCompleteTools = settings.useChatCompletions.value)
-        turn = acc
-        var assistant = ChatMessage(
-            id = UUID.randomUUID().toString(),
-            role = Role.ASSISTANT,
-            parts = emptyList(),
-            createdAt = now + 1,
-            isStreaming = true,
-        )
-        var lastPersist = System.currentTimeMillis()
-        var succeeded = false
-
-        try {
-            repo.saveMessage(
-                threadId,
-                ChatMessage(UUID.randomUUID().toString(), Role.USER, listOf(MessagePart.Text(text)), now),
-            )
-            repo.touchThread(threadId, now, text)
-            inFlight.value = assistant
-            // Separate job: the title is still set if the user stops the turn.
-            viewModelScope.launch { repo.autoTitleIfBlank(threadId, text) }
-
-            repo.streamTurn(threadId, text)
-                .onEach { ev ->
-                    val toolAfterText = acc.apply(ev)
-                    assistant = assistant.copy(parts = acc.parts, error = acc.error, isStreaming = !acc.finished)
-                    inFlight.value = assistant
-                    if (toolAfterText) flash(YumemiMood.SURPRISED, 1_500)
-                    val t = System.currentTimeMillis()
-                    if (t - lastPersist > 1_000) {
-                        lastPersist = t
-                        repo.saveMessage(threadId, assistant.copy(isStreaming = false))
-                    }
-                }
-                .takeWhile { !isTerminal(it) }
-                .collect { }
-
-            if (!acc.finished) {
-                // Stream closed without a terminal event: treat as completed if anything arrived.
-                if (acc.parts.isEmpty()) {
-                    acc.fail("Hermes no devolvió ninguna respuesta")
-                } else {
-                    acc.apply(StreamEvent.Completed)
-                }
-            }
-            succeeded = acc.error == null && !acc.stopped
-            if (succeeded) internal.update { it.copy(connection = ConnectionState.Connected) }
-        } catch (e: CancellationException) {
-            acc.stop()
-            throw e
-        } catch (e: Exception) {
-            acc.fail(e.toUserMessage())
-            e.toConnectionState()?.let { c -> internal.update { it.copy(connection = c) } }
-        } finally {
-            withContext(NonCancellable) {
-                val finalMsg = assistant.copy(parts = acc.parts, error = acc.error, isStreaming = false)
-                if (finalMsg.parts.isNotEmpty() || finalMsg.error != null) {
-                    try {
-                        repo.saveMessage(threadId, finalMsg)
-                        val snippet = finalMsg.parts.filterIsInstance<MessagePart.Text>()
-                            .joinToString(" ") { it.text }
-                        if (snippet.isNotBlank()) repo.touchThread(threadId, System.currentTimeMillis(), snippet)
-                    } catch (e: Exception) {
-                        // Persisting is best effort.
-                    }
-                    inFlight.value = finalMsg
-                } else {
-                    inFlight.value = null
-                }
-                internal.update { it.copy(isSending = false, error = acc.error) }
-            }
-        }
-
-        if (succeeded) {
-            flash(YumemiMood.HAPPY, 3_000)
-            loadTranscript()
         }
     }
 }

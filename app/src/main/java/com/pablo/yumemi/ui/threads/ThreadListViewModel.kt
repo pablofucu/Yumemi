@@ -3,6 +3,8 @@ package com.pablo.yumemi.ui.threads
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pablo.yumemi.data.HermesRepository
+import com.pablo.yumemi.data.remote.HermesException
+import com.pablo.yumemi.data.remote.NetworkMonitor
 import com.pablo.yumemi.data.remote.toConnectionState
 import com.pablo.yumemi.data.remote.toUserMessage
 import com.pablo.yumemi.data.settings.SettingsStore
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -31,6 +34,7 @@ internal fun ChatThread.withDisplayTitle(): ChatThread =
 class ThreadListViewModel(
     private val repo: HermesRepository,
     private val settings: SettingsStore,
+    network: NetworkMonitor,
 ) : ViewModel() {
 
     private data class Internal(
@@ -68,13 +72,19 @@ class ThreadListViewModel(
         viewModelScope.launch {
             combine(settings.baseUrl, settings.apiKey) { u, k -> u to k }
                 .distinctUntilChanged()
-                .collect { refresh() }
+                .collect { startRefresh(keepError = false, retryOnUnreachable = true) }
+        }
+        // The VPN often comes up after the radio: retry as soon as a network (re)appears.
+        viewModelScope.launch {
+            network.availableTick.drop(1).collect {
+                if (internal.value.connection !is ConnectionState.Connected) refresh()
+            }
         }
     }
 
     fun refresh() = startRefresh(keepError = false)
 
-    private fun startRefresh(keepError: Boolean) {
+    private fun startRefresh(keepError: Boolean, retryOnUnreachable: Boolean = false) {
         if (!settings.isConfigured) {
             internal.update { it.copy(connection = ConnectionState.NotConfigured, isRefreshing = false) }
             return
@@ -82,23 +92,35 @@ class ThreadListViewModel(
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             internal.update { it.copy(isRefreshing = true, error = if (keepError) it.error else null) }
-            try {
-                repo.refreshThreads()
-                internal.update { it.copy(connection = ConnectionState.Connected, isRefreshing = false) }
-                flashHappy()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                internal.update {
-                    it.copy(
-                        connection = e.toConnectionState() ?: it.connection,
-                        isRefreshing = false,
-                        error = e.toUserMessage(),
-                    )
-                }
+            val failure = refreshOnce()
+            if (failure is HermesException.Unreachable && retryOnUnreachable) {
+                // Startup over a VPN that is still waking up: one more try shortly after.
+                delay(3_000)
+                internal.update { it.copy(isRefreshing = true) }
+                refreshOnce()
             }
         }
     }
+
+    /** One refresh attempt; updates the state and returns the failure, if any. */
+    private suspend fun refreshOnce(): Exception? =
+        try {
+            repo.refreshThreads()
+            internal.update { it.copy(connection = ConnectionState.Connected, isRefreshing = false) }
+            flashHappy()
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            internal.update {
+                it.copy(
+                    connection = e.toConnectionState() ?: it.connection,
+                    isRefreshing = false,
+                    error = e.toUserMessage(),
+                )
+            }
+            e
+        }
 
     fun createThread(onCreated: (threadId: String) -> Unit) {
         viewModelScope.launch {
