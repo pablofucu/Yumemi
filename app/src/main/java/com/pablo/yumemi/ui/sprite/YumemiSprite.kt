@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,10 +39,11 @@ import kotlin.random.Random
 private const val FRAME_W = 528f
 private const val FRAME_H = 576f
 
-/** Head crop used for the avatar (frame coordinates). */
-private const val HEAD_CX = 360f
-private const val HEAD_CY = 135f
-private const val HEAD_SIDE = 240f
+/** Square bust crop (head and shoulders) used for the avatar, in frame coordinates. */
+private data class Bust(val cx: Float, val cy: Float, val side: Float)
+
+private val BUST_STAND = Bust(352f, 175f, 300f)
+private val BUST_SHY = Bust(380f, 230f, 300f) // the shy pose leans, so her head sits lower
 
 private data class Layers(
     @DrawableRes val body: Int,
@@ -49,7 +51,9 @@ private data class Layers(
     @DrawableRes val face: Int,
     @DrawableRes val ribbon: Int,
     val canTalk: Boolean,
-)
+) {
+    val bust: Bust get() = if (body == R.drawable.yu_body_shy) BUST_SHY else BUST_STAND
+}
 
 private fun layersFor(mood: YumemiMood): Layers = when (mood) {
     YumemiMood.IDLE -> Layers(R.drawable.yu_body_stand, R.drawable.yu_arms_rest, R.drawable.yu_face_smile, R.drawable.yu_ribbon_stand_lilac, true)
@@ -63,7 +67,7 @@ private fun layersFor(mood: YumemiMood): Layers = when (mood) {
 
 /**
  * Layered sprite of Yumemi. Portrait (528:576) unless [face] is true, in which case it is a
- * square avatar crop of the head.
+ * square avatar crop of her head and shoulders that follows the current pose.
  */
 @Composable
 fun YumemiSprite(
@@ -103,18 +107,17 @@ fun YumemiSprite(
     }
 
     if (face) {
+        val bust = layers.bust
         BoxWithConstraints(modifier.aspectRatio(1f).clipToBounds()) {
             val s = maxWidth
-            val k = FRAME_H / HEAD_SIDE // zoom relative to "fit height to s"
-            val w = s * (k * FRAME_W / FRAME_H)
-            val h = s * k
-            val dx = s / 2 - w * (HEAD_CX / FRAME_W)
-            val dy = s / 2 - h * (HEAD_CY / FRAME_H)
+            val k = s / bust.side // dp per frame px
             Box(
                 Modifier
-                    .align(Alignment.TopStart)
-                    .requiredSize(w, h)
-                    .offset(dx, dy),
+                    // Unbounded so the oversized stack is laid out from the top-left
+                    // instead of being re-centred, then shifted onto the bust.
+                    .wrapContentSize(Alignment.TopStart, unbounded = true)
+                    .offset(s / 2 - k * bust.cx, s / 2 - k * bust.cy)
+                    .requiredSize(k * FRAME_W, k * FRAME_H),
             ) {
                 SpriteStack(layers, mouthOpen, sway)
             }
