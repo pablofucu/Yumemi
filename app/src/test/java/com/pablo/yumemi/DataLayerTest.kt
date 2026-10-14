@@ -10,6 +10,7 @@ import com.pablo.yumemi.data.chat.TurnAccumulator
 import com.pablo.yumemi.data.remote.SseEvent
 import com.pablo.yumemi.data.remote.SseLineParser
 import com.pablo.yumemi.data.settings.HostRules
+import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatMessage
 import com.pablo.yumemi.domain.MessagePart
 import com.pablo.yumemi.domain.Role
@@ -167,5 +168,38 @@ class DataLayerTest {
         assertTrue(HostRules.isInsecure("http://172.32.0.1"))
         assertTrue(HostRules.isInsecure("http://100.128.0.1"))
         assertEquals("http://100.64.0.1:8642", HostRules.normalizeBaseUrl("100.64.0.1:8642/"))
+    }
+
+    @Test
+    fun approvalRequestBecomesCardAndExpiresWhenTurnEnds() {
+        val ev = EventMapper.mapSession(
+            SseEvent(
+                "approval.request",
+                "{\"event\":\"approval.request\",\"run_id\":\"run_1\",\"request_id\":\"r1\"," +
+                    "\"command\":\"rm -rf build\",\"description\":\"recursive delete\",\"choices\":[\"once\",\"deny\"]}",
+            ),
+        ).single() as StreamEvent.ApprovalRequested
+        assertEquals("run_1", ev.runId)
+        assertEquals(listOf("once", "deny"), ev.choices)
+
+        val acc = TurnAccumulator()
+        acc.apply(ev)
+        val card = acc.parts.single() as MessagePart.Approval
+        assertEquals(ApprovalStatus.PENDING, card.status)
+        assertEquals(card, PartCodec.decode(PartCodec.encode(acc.parts)).single().let { (it as MessagePart.Approval).copy(status = ApprovalStatus.PENDING) })
+
+        acc.apply(StreamEvent.Completed)
+        assertEquals(ApprovalStatus.EXPIRED, (acc.parts.single() as MessagePart.Approval).status)
+    }
+
+    @Test
+    fun errorEventFailsAndCompletedContentFillsMissingAnswer() {
+        val failed = EventMapper.mapSession(SseEvent("error", "{\"message\":\"boom\"}")).single()
+        assertEquals(StreamEvent.Failed("boom"), failed)
+
+        val acc = TurnAccumulator()
+        acc.apply(StreamEvent.ToolStarted("t1", "terminal", "ls"))
+        EventMapper.mapSession(SseEvent("assistant.completed", "{\"content\":\"Listo\"}")).forEach { acc.apply(it) }
+        assertEquals("Listo", (acc.parts.last() as MessagePart.Text).text)
     }
 }

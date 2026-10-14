@@ -44,6 +44,10 @@ object TranscriptMerger {
     private fun pickAssistant(server: ChatMessage?, local: ChatMessage?): ChatMessage? {
         if (local == null) return server
         if (server == null) return local
+        if (!local.isStreaming && text(local).isBlank() && text(server).isNotBlank() && hasDetail(local)) {
+            // Detail survived locally but the answer never reached the stream: keep both.
+            return local.copy(parts = local.parts + MessagePart.Text(text(server)))
+        }
         val useLocal = local.isStreaming || hasDetail(local) || textLen(local) >= textLen(server)
         return if (useLocal) local else server.copy(id = local.id)
     }

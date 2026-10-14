@@ -1,6 +1,7 @@
 package com.pablo.yumemi.data.chat
 
 import com.pablo.yumemi.data.remote.LenientJson
+import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.MessagePart
 import com.pablo.yumemi.domain.ToolStatus
 import kotlinx.serialization.Serializable
@@ -17,6 +18,9 @@ private data class PartDto(
     val result: String? = null,
     val status: String = "OK",
     val duration: Double? = null,
+    val run: String = "",
+    val choices: List<String> = emptyList(),
+    val answer: String? = null,
 )
 
 object PartCodec {
@@ -43,6 +47,10 @@ object PartCodec {
         is MessagePart.Subagent -> PartDto(
             type = "subagent", id = p.id, text = p.summary, status = p.status.name, duration = p.durationSec,
         )
+        is MessagePart.Approval -> PartDto(
+            type = "approval", id = p.requestId, run = p.runId, tool = p.command, text = p.description,
+            choices = p.choices, status = p.status.name, answer = p.answer,
+        )
     }
 
     private fun status(s: String): ToolStatus =
@@ -66,6 +74,12 @@ object PartCodec {
             id = d.id, summary = d.text,
             status = status(d.status).let { if (it == ToolStatus.RUNNING) ToolStatus.FAILED else it },
             durationSec = d.duration,
+        )
+        "approval" -> MessagePart.Approval(
+            requestId = d.id, runId = d.run, command = d.tool, description = d.text, choices = d.choices,
+            // A stored question can no longer be answered: its turn is over.
+            status = if (d.status == ApprovalStatus.ANSWERED.name) ApprovalStatus.ANSWERED else ApprovalStatus.EXPIRED,
+            answer = d.answer,
         )
         else -> null
     }

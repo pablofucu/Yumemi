@@ -133,6 +133,9 @@ class HermesRepository(
             if (e.code == 404) emptyList() else throw e
         }
 
+    suspend fun answerApproval(runId: String, requestId: String, choice: String) =
+        client.answerApproval(runId, requestId, choice)
+
     // ---------- streaming ----------
 
     fun streamTurn(threadId: String, text: String): Flow<StreamEvent> {
