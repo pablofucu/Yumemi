@@ -43,7 +43,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mikepenz.markdown.m3.Markdown
 import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatMessage
 import com.pablo.yumemi.domain.MessagePart
@@ -107,7 +106,7 @@ fun AssistantMessage(
     // above the chat already says what she is doing live.
     var showWork by remember(detailsExpanded) { mutableStateOf(detailsExpanded) }
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        SoftCard(Modifier.widthIn(max = 360.dp), shape = AssistantShape, elevation = 6.dp) {
+        SoftCard(Modifier.widthIn(max = 640.dp).fillMaxWidth(), shape = AssistantShape, elevation = 6.dp) {
             Column(
                 Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -120,7 +119,7 @@ fun AssistantMessage(
                         is Block.Actions -> if (showWork) ActionsGroup(b.parts, detailsExpanded)
                         is Block.Single -> when (val p = b.part) {
                             is MessagePart.Text ->
-                                if (p.text.isNotBlank()) Markdown(content = p.text)
+                                if (p.text.isNotBlank()) YumemiMarkdown(p.text)
                             is MessagePart.Reasoning -> if (showWork)
                                 ReasoningSection(p.text, message.isStreaming && b.isLast, detailsExpanded)
                             is MessagePart.Commentary -> if (showWork)
@@ -143,6 +142,14 @@ fun AssistantMessage(
                         style = MaterialTheme.typography.bodySmall,
                         color = Yu.Danger,
                     )
+                }
+                if (hasText && !message.isStreaming) {
+                    val reply = remember(message.parts) {
+                        message.parts.filterIsInstance<MessagePart.Text>()
+                            .filter { it.text.isNotBlank() }
+                            .joinToString("\n\n") { it.text }
+                    }
+                    CopyButton(reply, Modifier.align(Alignment.End), iconSize = 16.dp)
                 }
             }
         }

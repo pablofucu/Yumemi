@@ -1,0 +1,47 @@
+name: Capturas de la app
+
+on:
+  push:
+    branches-ignore:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capturas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Generar capturas
+        run: |
+          chmod +x ./gradlew
+          set -o pipefail
+          ./gradlew testDebugUnitTest --tests '*MarkdownScreenshotTest*' --console=plain 2>&1 | tee test.log
+
+      - name: Resumen de errores
+        if: failure()
+        run: |
+          echo "==== ERRORES ===="
+          grep -E "^e: |error:|What went wrong|FAILED|Exception" -A3 test.log | sed 's#file:///home/runner/work/[^/]*/[^/]*/##' | head -150 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yumemi-capturas
+          path: app/build/outputs/roborazzi/*.png
+
+      - name: Publicar capturas en la release "capturas"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view capturas >/dev/null 2>&1 || gh release create capturas --prerelease --latest=false --title "Capturas de la app" --notes "Capturas generadas por CI"
+          gh release upload capturas app/build/outputs/roborazzi/*.png --clobber
