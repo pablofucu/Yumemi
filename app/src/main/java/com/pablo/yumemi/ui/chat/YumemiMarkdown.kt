@@ -87,7 +87,6 @@ private val CodeBackground = Color(0xFFF6F7FF)
 private val ZebraStripe = Color(0xFFF8F9FF)
 private val MinColumnWidth = 64.dp
 private val MaxColumnWidth = 240.dp
-private val MinShrunkColumnWidth = 88.dp
 private val QuotePrefix = Regex("^ {0,3}> ?")
 
 /** Markdown for chat bubbles: compact headings, wrapping aligned tables, copyable highlighted code. */
@@ -327,17 +326,24 @@ private fun AlignedTable(table: TableData, style: TextStyle) {
                 }
                 widest.coerceIn(minColumn, maxColumn)
             }
+            // A column never shrinks below its longest unbreakable word.
+            val floors = IntArray(columns) { c ->
+                var longest = 0
+                for (r in 0 until rowCount) {
+                    longest = max(longest, measurables[r * stride + 1 + c].minIntrinsicWidth(0))
+                }
+                min(longest, maxColumn)
+            }
             val natural = widths.sum()
             if (natural > constraints.minWidth) {
-                // Water-fill: cap the widest columns so the table fits, but not below the floor.
+                // Water-fill: cap the widest columns so the table fits, keeping each column's floor.
                 var lo = 0
                 var hi = maxColumn
                 while (lo < hi) {
                     val mid = (lo + hi + 1) / 2
-                    if (widths.sumOf { min(it, mid) } <= constraints.minWidth) lo = mid else hi = mid - 1
+                    if ((0 until columns).sumOf { max(min(widths[it], mid), floors[it]) } <= constraints.minWidth) lo = mid else hi = mid - 1
                 }
-                val cap = max(lo, MinShrunkColumnWidth.roundToPx())
-                for (c in 0 until columns) widths[c] = min(widths[c], cap)
+                for (c in 0 until columns) widths[c] = max(min(widths[c], lo), floors[c])
             } else if (constraints.minWidth > natural) {
                 val extra = constraints.minWidth - natural
                 for (c in 0 until columns) widths[c] += (extra.toLong() * widths[c] / natural).toInt()
