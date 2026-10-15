@@ -42,8 +42,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -87,6 +89,7 @@ private val CodeBackground = Color(0xFFF6F7FF)
 private val ZebraStripe = Color(0xFFF8F9FF)
 private val MinColumnWidth = 64.dp
 private val MaxColumnWidth = 240.dp
+private val CellPadding = 12.dp
 private val QuotePrefix = Regex("^ {0,3}> ?")
 
 /** Markdown for chat bubbles: compact headings, wrapping aligned tables, copyable highlighted code. */
@@ -287,12 +290,31 @@ private fun TableBlock(content: String, node: ASTNode, baseStyle: TextStyle) {
         }
         TableData(listOf(headerCells) + body, aligns)
     }
-    if (table.aligns.isNotEmpty()) AlignedTable(table, style)
+    if (table.aligns.isEmpty()) return
+    // A column never shrinks below its longest whitespace-separated token (breaking inside it looks broken).
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val floors = remember(table, style, textMeasurer, density) {
+        val padding = with(density) { (CellPadding * 2).roundToPx() }
+        val maxColumn = with(density) { MaxColumnWidth.roundToPx() }
+        IntArray(table.aligns.size) { c ->
+            var longest = 0
+            table.rows.forEachIndexed { r, row ->
+                val cellStyle = if (r == 0) style.copy(fontWeight = FontWeight.Bold) else style
+                row[c].text.split(Regex("\\s+")).filter { it.isNotEmpty() }.forEach { token ->
+                    val width = textMeasurer.measure(AnnotatedString(token), cellStyle, softWrap = false, maxLines = 1).size.width
+                    longest = max(longest, width)
+                }
+            }
+            min(longest + padding, maxColumn)
+        }
+    }
+    AlignedTable(table, style, floors)
 }
 
 /** Columns share one width across rows (capped, text wraps), and the table scrolls sideways if it overflows. */
 @Composable
-private fun AlignedTable(table: TableData, style: TextStyle) {
+private fun AlignedTable(table: TableData, style: TextStyle, floors: IntArray) {
     val columns = table.aligns.size
     val rowCount = table.rows.size
     val shape = RoundedCornerShape(12.dp)
@@ -308,7 +330,7 @@ private fun AlignedTable(table: TableData, style: TextStyle) {
                     row.forEachIndexed { c, cell ->
                         MarkdownText(
                             content = cell,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = CellPadding, vertical = 8.dp),
                             style = style.copy(textAlign = table.aligns[c]),
                         )
                     }
@@ -325,14 +347,6 @@ private fun AlignedTable(table: TableData, style: TextStyle) {
                     widest = max(widest, measurables[r * stride + 1 + c].maxIntrinsicWidth(0))
                 }
                 widest.coerceIn(minColumn, maxColumn)
-            }
-            // A column never shrinks below its longest unbreakable word.
-            val floors = IntArray(columns) { c ->
-                var longest = 0
-                for (r in 0 until rowCount) {
-                    longest = max(longest, measurables[r * stride + 1 + c].minIntrinsicWidth(0))
-                }
-                min(longest, maxColumn)
             }
             val natural = widths.sum()
             if (natural > constraints.minWidth) {
