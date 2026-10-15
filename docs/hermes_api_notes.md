@@ -31,3 +31,10 @@ Exact JSON field names of list/messages responses are not documented: parse defe
 
 ## Stopping a turn
 Prefer runs `stop` when using runs; for session streams, cancel the HTTP call.
+
+## Formato (markdown)
+El API server de Hermes inyecta en el prompt de sistema una nota que le dice que responda en texto plano (sin asteriscos, listas, cabeceras ni bloques de codigo), porque no conoce la capa de renderizado. La app pinta GitHub-flavored Markdown, asi que en cada turno enviamos un prompt de sistema efimero para que Hermes sepa que puede usar Markdown:
+- `POST /v1/runs`: campo `instructions`.
+- `POST /api/sessions/{id}/chat/stream`: campo `system_message`.
+- `POST /v1/chat/completions`: mensaje `{"role":"system"}` al principio de `messages`.
+El texto esta en la constante `RENDER_HINT` de `HermesClient.kt`.
