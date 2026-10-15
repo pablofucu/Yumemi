@@ -306,7 +306,8 @@ private fun TableBlock(content: String, node: ASTNode, baseStyle: TextStyle) {
                     longest = max(longest, width)
                 }
             }
-            min(longest + padding, maxColumn)
+            // +2px so sub-pixel rounding never wraps the token.
+            min(longest + padding + 2, maxColumn)
         }
     }
     AlignedTable(table, style, floors)
