@@ -40,6 +40,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -80,11 +81,13 @@ import org.intellij.markdown.ast.getTextInNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import kotlin.math.max
+import kotlin.math.min
 
 private val CodeBackground = Color(0xFFF6F7FF)
 private val ZebraStripe = Color(0xFFF8F9FF)
 private val MinColumnWidth = 64.dp
 private val MaxColumnWidth = 240.dp
+private val MinShrunkColumnWidth = 88.dp
 private val QuotePrefix = Regex("^ {0,3}> ?")
 
 /** Markdown for chat bubbles: compact headings, wrapping aligned tables, copyable highlighted code. */
@@ -134,7 +137,7 @@ private fun StyledMarkdown(content: String, textColor: Color, modifier: Modifier
             list = 2.dp,
             listItemBottom = 4.dp,
             indentList = 10.dp,
-            codeBlock = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            codeBlock = PaddingValues(horizontal = 12.dp),
         ),
         dimens = markdownDimens(
             dividerThickness = 1.dp,
@@ -210,7 +213,16 @@ private fun CodeCard(code: String, language: String?) {
             )
             CopyButton(text, iconSize = 14.dp)
         }
-        MarkdownHighlightedCode(text, language, highlights)
+        // The library pads the code 8dp on every side; pull it up so the header sits close to the first line.
+        Box(
+            Modifier.layout { measurable, constraints ->
+                val pull = 4.dp.roundToPx()
+                val placeable = measurable.measure(constraints)
+                layout(placeable.width, placeable.height - pull) { placeable.place(0, -pull) }
+            },
+        ) {
+            MarkdownHighlightedCode(text, language, highlights)
+        }
     }
 }
 
@@ -316,7 +328,17 @@ private fun AlignedTable(table: TableData, style: TextStyle) {
                 widest.coerceIn(minColumn, maxColumn)
             }
             val natural = widths.sum()
-            if (constraints.minWidth > natural) {
+            if (natural > constraints.minWidth) {
+                // Water-fill: cap the widest columns so the table fits, but not below the floor.
+                var lo = 0
+                var hi = maxColumn
+                while (lo < hi) {
+                    val mid = (lo + hi + 1) / 2
+                    if (widths.sumOf { min(it, mid) } <= constraints.minWidth) lo = mid else hi = mid - 1
+                }
+                val cap = max(lo, MinShrunkColumnWidth.roundToPx())
+                for (c in 0 until columns) widths[c] = min(widths[c], cap)
+            } else if (constraints.minWidth > natural) {
                 val extra = constraints.minWidth - natural
                 for (c in 0 until columns) widths[c] += (extra.toLong() * widths[c] / natural).toInt()
                 widths[columns - 1] += (constraints.minWidth - widths.sum()).coerceAtLeast(0)
