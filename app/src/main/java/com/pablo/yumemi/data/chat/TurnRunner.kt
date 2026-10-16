@@ -67,7 +67,8 @@ class TurnRunner(
 
     private data class Pending(val runId: String, val assistantId: String, val createdAt: Long, val lastSeq: Long)
 
-    private val prefs = context.applicationContext.getSharedPreferences(PENDING_FILE, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences(PENDING_FILE, Context.MODE_PRIVATE)
     private val states = ConcurrentHashMap<String, MutableStateFlow<LiveTurn?>>()
     private val active = ConcurrentHashMap<String, Active>()
     private val jobs = ConcurrentHashMap<String, Job>()
@@ -179,6 +180,8 @@ class TurnRunner(
 
     private fun launchTurn(a: Active, body: suspend () -> Unit) {
         active[a.threadId] = a
+        // Foreground service: keeps the process and network alive while the app is in the background.
+        TurnService.setRunning(appContext, true)
         publish(a)
         // LAZY: the job is registered before it can possibly finish.
         val job = scope.launch(start = CoroutineStart.LAZY) { body() }
@@ -278,6 +281,7 @@ class TurnRunner(
                 }
                 clearPending(threadId)
                 active.remove(threadId, a)
+                if (active.isEmpty()) TurnService.setRunning(appContext, false)
                 publish(
                     a,
                     running = false,
