@@ -3,6 +3,7 @@ package com.pablo.yumemi.ui.sprite
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
@@ -25,11 +27,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pablo.yumemi.R
 import com.pablo.yumemi.domain.YumemiMood
 import kotlinx.coroutines.delay
@@ -76,7 +80,18 @@ fun YumemiSprite(
     talking: Boolean = false,
     face: Boolean = false,
 ) {
-    val layers = layersFor(mood)
+    val happy = mood == YumemiMood.HAPPY
+    // Happy alternates the wink with a bright smile so the face keeps moving.
+    var winkOn by remember { mutableStateOf(true) }
+    LaunchedEffect(happy) {
+        winkOn = true
+        while (happy) {
+            delay(650)
+            winkOn = !winkOn
+        }
+    }
+    val base = layersFor(mood)
+    val layers = if (happy && !winkOn) base.copy(face = R.drawable.yu_face_smile) else base
 
     val infinite = rememberInfiniteTransition(label = "yumemi-sprite")
     val bob by infinite.animateFloat(
@@ -91,6 +106,21 @@ fun YumemiSprite(
         animationSpec = infiniteRepeatable(tween(3000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "sway",
     )
+
+    // Little hops and a livelier ribbon while happy.
+    val hop by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(340, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "hop",
+    )
+    val floatT by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing)),
+        label = "float",
+    )
+    val lift = if (happy) hop else 0f
 
     // Mouth flapping while she "speaks".
     val speaking = talking && layers.canTalk
@@ -110,31 +140,34 @@ fun YumemiSprite(
         val bust = layers.bust
         BoxWithConstraints(modifier.aspectRatio(1f).clipToBounds()) {
             val s = maxWidth
+            val liftPx = lift
             val k = s / bust.side // dp per frame px
             Box(
                 Modifier
                     // Unbounded so the oversized stack is laid out from the top-left
                     // instead of being re-centred, then shifted onto the bust.
                     .wrapContentSize(Alignment.TopStart, unbounded = true)
-                    .offset(s / 2 - k * bust.cx, s / 2 - k * bust.cy)
+                    .offset(s / 2 - k * bust.cx, s / 2 - k * bust.cy - s * 0.04f * liftPx)
                     .requiredSize(k * FRAME_W, k * FRAME_H),
             ) {
-                SpriteStack(layers, mouthOpen, sway)
+                SpriteStack(layers, mouthOpen, sway, if (happy) 3f else 1f)
             }
+            if (happy) HappySparkles(floatT)
         }
     } else {
         Box(
             modifier
                 .aspectRatio(FRAME_W / FRAME_H)
-                .graphicsLayer { translationY = bob * 3.dp.toPx() },
+                .graphicsLayer { translationY = bob * 3.dp.toPx() - lift * 9.dp.toPx() },
         ) {
-            SpriteStack(layers, mouthOpen, sway)
+            SpriteStack(layers, mouthOpen, sway, if (happy) 3f else 1f)
+            if (happy) HappySparkles(floatT)
         }
     }
 }
 
 @Composable
-private fun SpriteStack(layers: Layers, mouthOpen: Boolean, sway: Float) {
+private fun SpriteStack(layers: Layers, mouthOpen: Boolean, sway: Float, swayGain: Float) {
     // Body (stand <-> shy)
     Crossfade(layers.body, Modifier.fillMaxSize(), animationSpec = tween(350), label = "body") { id ->
         SpriteLayer(id)
@@ -154,7 +187,7 @@ private fun SpriteStack(layers: Layers, mouthOpen: Boolean, sway: Float) {
             .fillMaxSize()
             .graphicsLayer {
                 transformOrigin = TransformOrigin(0.68f, 0.16f)
-                rotationZ = sway * 1.5f
+                rotationZ = sway * 1.5f * swayGain
             },
         animationSpec = tween(500),
         label = "ribbon",
@@ -169,4 +202,29 @@ private fun SpriteLayer(@DrawableRes id: Int) {
         modifier = Modifier.fillMaxSize(),
         contentScale = ContentScale.Fit,
     )
+}
+
+private val SPARKLES = listOf(
+    Triple("♥", 0.12f, 0.00f),
+    Triple("✦", 0.78f, 0.20f),
+    Triple("♥", 0.88f, 0.45f),
+    Triple("✦", 0.05f, 0.62f),
+    Triple("★", 0.70f, 0.80f),
+)
+
+/** Hearts and stars drifting up around her while she is happy. */
+@Composable
+private fun HappySparkles(t: Float) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        SPARKLES.forEachIndexed { i, (glyph, fx, phase) ->
+            val p = (t + phase) % 1f
+            val alpha = (1f - p).coerceIn(0f, 1f) * (p * 6f).coerceAtMost(1f)
+            Text(
+                glyph,
+                color = (if (glyph == "♥") Color(0xFFFF8FB5) else Color(0xFFFFD36B)).copy(alpha = alpha),
+                fontSize = (if (i % 2 == 0) 16 else 13).sp,
+                modifier = Modifier.offset(maxWidth * fx, maxHeight * (0.7f - 0.6f * p)),
+            )
+        }
+    }
 }

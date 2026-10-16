@@ -224,7 +224,7 @@ class ChatViewModel(
                     wasRunning = false
                     if (live.succeeded) {
                         internal.update { it.copy(connection = ConnectionState.Connected) }
-                        flash(YumemiMood.HAPPY, 3_000)
+                        flash(YumemiMood.HAPPY, 6_000)
                     }
                     // Even after a failure the server may still hold the answer.
                     loadTranscript()
