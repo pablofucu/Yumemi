@@ -21,3 +21,13 @@ data class MessageEntity(
     val createdAt: Long,
     val error: String?,
 )
+
+/** A message a cron job run produced; [id] is "jobId:runAt" so re-seeing the same run is idempotent. */
+@Entity(tableName = "cron_results", indices = [Index("runAt")])
+data class CronResultEntity(
+    @PrimaryKey val id: String,
+    val jobId: String,
+    val jobName: String,
+    val runAt: Long,
+    val text: String,
+)

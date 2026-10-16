@@ -58,3 +58,23 @@ class CronParserTest {
         assertTrue(CronParser.parseList("not json").isEmpty())
     }
 }
+
+class CronResultTest {
+
+    @Test
+    fun outputBecomesResultKeyedByRun() {
+        val body = """{"job":{"id":"j1","name":"Mensaje diario","last_run_at":1760432400,"last_status":"ok",
+            "latest_execution":{"status":"completed","output":"  Buenos días  "}}}"""
+        val r = CronParser.parseOne(body)!!.toResult()!!
+        assertEquals("j1:1760432400000", r.id)
+        assertEquals("Mensaje diario", r.jobName)
+        assertEquals("Buenos días", r.text)
+    }
+
+    @Test
+    fun noOutputOrFailedRunGivesNoResult() {
+        assertNull(CronParser.parseOne("""{"job":{"id":"a","last_run_at":1760432400}}""")!!.toResult())
+        val failed = """{"job":{"id":"a","last_run_at":1760432400,"last_status":"error","last_response":"x"}}"""
+        assertNull(CronParser.parseOne(failed)!!.toResult())
+    }
+}

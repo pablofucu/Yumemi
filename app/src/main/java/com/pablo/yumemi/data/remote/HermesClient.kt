@@ -39,7 +39,7 @@ import okhttp3.Response
 class HermesClient(private val settings: SettingsStore) {
 
     private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
@@ -51,6 +51,16 @@ class HermesClient(private val settings: SettingsStore) {
         .build()
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
+
+    /** Opens DNS/TCP/TLS to the server ahead of the first real request; failures are irrelevant. */
+    fun prewarm() {
+        if (!settings.isConfigured) return
+        try {
+            http.newCall(builder(settings.baseUrl.value, settings.apiKey.value, listOf("health"), auth = false).get().build())
+                .execute().close()
+        } catch (_: Exception) {
+        }
+    }
 
     // ---------- plumbing ----------
 

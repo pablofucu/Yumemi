@@ -17,18 +17,30 @@ import kotlinx.coroutines.SupervisorJob
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
-    val settings: SettingsStore = SettingsStore(appContext)
-    val client: HermesClient = HermesClient(settings)
-    val database: YumemiDatabase =
+    val settings: SettingsStore by lazy { SettingsStore(appContext) }
+    val client: HermesClient by lazy { HermesClient(settings) }
+    val database: YumemiDatabase by lazy {
         Room.databaseBuilder(appContext, YumemiDatabase::class.java, "yumemi.db")
+            .addMigrations(YumemiDatabase.MIGRATION_1_2)
             .fallbackToDestructiveMigration()
             .build()
-    val repository: HermesRepository = HermesRepository(client, database, settings)
-    val cronRepository: CronRepository = CronRepository(client, appContext)
+    }
+    val repository: HermesRepository by lazy { HermesRepository(client, database, settings) }
+    val cronRepository: CronRepository by lazy { CronRepository(client, appContext, database.cronResultDao()) }
     /** Registered once for the process lifetime, never unregistered. */
-    val networkMonitor: NetworkMonitor = NetworkMonitor(appContext)
+    val networkMonitor: NetworkMonitor by lazy { NetworkMonitor(appContext) }
 
     /** App-level scope: assistant turns must outlive any screen. */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    val turnRunner: TurnRunner = TurnRunner(appContext, repository, client, settings, networkMonitor, appScope)
+    val turnRunner: TurnRunner by lazy { TurnRunner(appContext, repository, client, settings, networkMonitor, appScope) }
+
+    /** Builds the slow parts (Keystore prefs, Room, TLS to the server) on a background thread while the UI starts. */
+    fun warmUp() {
+        Thread {
+            runCatching {
+                settings; database; networkMonitor
+                client.prewarm()
+            }
+        }.start()
+    }
 }

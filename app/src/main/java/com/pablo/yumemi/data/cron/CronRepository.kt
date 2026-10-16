@@ -1,11 +1,15 @@
 package com.pablo.yumemi.data.cron
 
 import android.content.Context
+import com.pablo.yumemi.data.local.CronResultDao
+import com.pablo.yumemi.data.local.CronResultEntity
 import com.pablo.yumemi.data.remote.HermesClient
 import com.pablo.yumemi.data.remote.HermesException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -16,6 +20,7 @@ class CronException(message: String) : Exception(message)
 class CronRepository(
     private val client: HermesClient,
     context: Context,
+    private val resultDao: CronResultDao,
 ) {
     private val prefs =
         context.applicationContext.getSharedPreferences("yumemi_cron", Context.MODE_PRIVATE)
@@ -29,6 +34,13 @@ class CronRepository(
 
     /** Last successful job list (all jobs, hidden included); null until the first load. */
     val jobs: StateFlow<List<CronJob>?> = _jobs.asStateFlow()
+
+    /** Messages produced by cron runs seen on this phone, newest first. */
+    val results: Flow<List<CronResult>> = resultDao.observeAll().map { rows ->
+        rows.map { CronResult(it.id, it.jobId, it.jobName, it.runAt, it.text) }
+    }
+
+    suspend fun deleteResult(id: String) = resultDao.delete(id)
 
     private fun readHidden(): Set<String> =
         prefs.getStringSet(KEY_HIDDEN, null)?.toSet() ?: emptySet()
@@ -47,6 +59,11 @@ class CronRepository(
         }
         val parsed = CronParser.parseList(body)
         _jobs.value = parsed
+        // Keep each run's message: Hermes only reports the latest one, so it is saved as it is seen.
+        val found = parsed.mapNotNull { it.toResult() }
+        if (found.isNotEmpty()) {
+            resultDao.upsertAll(found.map { CronResultEntity(it.id, it.jobId, it.jobName, it.runAt, it.text) })
+        }
         return parsed
     }
 

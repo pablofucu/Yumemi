@@ -22,7 +22,6 @@ import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.SmartToy
-import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -39,7 +38,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +49,22 @@ import com.pablo.yumemi.domain.ToolStatus
 import com.pablo.yumemi.ui.components.SoftCard
 import com.pablo.yumemi.ui.components.softShadow
 import com.pablo.yumemi.ui.theme.Yu
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import com.pablo.yumemi.domain.YumemiMood
+import com.pablo.yumemi.ui.sprite.YumemiSprite
 
 private val UserShape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp)
 private val AssistantShape = RoundedCornerShape(6.dp, 22.dp, 22.dp, 22.dp)
@@ -100,48 +114,289 @@ fun AssistantMessage(
     modifier: Modifier = Modifier,
     onApprovalChoice: (requestId: String, choice: String) -> Unit = { _, _ -> },
 ) {
-    val blocks = remember(message.parts) { buildBlocks(message.parts) }
-    val hasText = message.parts.any { it is MessagePart.Text && it.text.isNotBlank() }
     val hasDetails = message.parts.any { it !is MessagePart.Text && it !is MessagePart.Approval }
-    // Reasoning, commentary and actions stay folded behind one summary line; the status panel
-    // above the chat already says what she is doing live.
+    // Folded, the message is a plain bubble with a one-line summary of the work; unfolded (per
+    // message, or for all of them from the stage counters) it becomes a timeline of every step.
     var showWork by remember(detailsExpanded) { mutableStateOf(detailsExpanded) }
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+    AnimatedContent(
+        showWork && hasDetails,
+        modifier.fillMaxWidth(),
+        transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(150)) },
+        label = "messageMode",
+    ) { timeline ->
+        if (timeline) {
+            TimelineMessage(message, showInlineError, onFold = { showWork = false }, onApprovalChoice)
+        } else {
+            BubbleMessage(message, hasDetails, showInlineError, onUnfold = { showWork = true }, onApprovalChoice)
+        }
+    }
+}
+
+@Composable
+private fun BubbleMessage(
+    message: ChatMessage,
+    hasDetails: Boolean,
+    showInlineError: Boolean,
+    onUnfold: () -> Unit,
+    onApprovalChoice: (requestId: String, choice: String) -> Unit,
+) {
+    val hasText = message.parts.any { it is MessagePart.Text && it.text.isNotBlank() }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         SoftCard(Modifier.widthIn(max = 360.dp), shape = AssistantShape, elevation = 6.dp) {
             Column(
                 Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                if (hasDetails) {
-                    WorkSummary(message.parts, message.isStreaming, showWork) { showWork = !showWork }
-                }
-                blocks.forEach { b ->
-                    when (b) {
-                        is Block.Actions -> if (showWork) ActionsGroup(b.parts, detailsExpanded)
-                        is Block.Single -> when (val p = b.part) {
-                            is MessagePart.Text ->
-                                if (p.text.isNotBlank()) Markdown(content = p.text)
-                            is MessagePart.Reasoning -> if (showWork)
-                                ReasoningSection(p.text, message.isStreaming && b.isLast, detailsExpanded)
-                            is MessagePart.Commentary -> if (showWork)
-                                Text(
-                                    p.text,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Yu.Muted,
-                                )
-                            // Never folded: Hermes is waiting on the answer.
-                            is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
-                            else -> Unit
-                        }
+                if (hasDetails) WorkSummary(message.parts, message.isStreaming, open = false, onToggle = onUnfold)
+                message.parts.forEach { p ->
+                    when (p) {
+                        is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
+                        // Never folded: Hermes is waiting on the answer.
+                        is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
+                        else -> Unit
                     }
                 }
                 val waiting = message.parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }
                 if (message.isStreaming && !hasText && !waiting) TypingDots()
-                if (showInlineError && message.error != null) {
+                if (showInlineError && message.error != null) InlineError(message.error)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InlineError(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = Yu.Danger)
+}
+
+private val RailX = 14.dp
+private val RailTop = 34.dp
+
+/**
+ * Detailed view of one answer: her avatar on a vertical rail and every step in the order it
+ * happened — reasoning, commentary, actions with their status and time, and the reply.
+ */
+@Composable
+private fun TimelineMessage(
+    message: ChatMessage,
+    showInlineError: Boolean,
+    onFold: () -> Unit,
+    onApprovalChoice: (requestId: String, choice: String) -> Unit,
+) {
+    val blocks = remember(message.parts) { buildBlocks(message.parts) }
+    val hasText = message.parts.any { it is MessagePart.Text && it.text.isNotBlank() }
+    val running = message.parts.any {
+        (it is MessagePart.ToolCall && it.status == ToolStatus.RUNNING) ||
+            (it is MessagePart.Subagent && it.status == ToolStatus.RUNNING)
+    }
+    val state = when {
+        message.error != null -> "con errores"
+        running -> "trabajando"
+        message.isStreaming -> "pensando"
+        else -> "hecho"
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawLine(
+                    Yu.Outline,
+                    start = Offset(RailX.toPx(), RailTop.toPx()),
+                    end = Offset(RailX.toPx(), size.height - 4.dp.toPx()),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            },
+    ) {
+        Box(
+            Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(Yu.SkySoft)
+                .border(1.dp, Yu.Lilac.copy(alpha = 0.6f), CircleShape),
+        ) {
+            YumemiSprite(YumemiMood.IDLE, Modifier.fillMaxSize(), face = true)
+        }
+        Column(
+            Modifier.padding(start = 38.dp).animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                Modifier
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onFold)
+                    .padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Yumemi · $state",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Yu.Muted,
+                )
+                Spacer(Modifier.width(2.dp))
+                Chevron(true)
+            }
+            blocks.forEach { b ->
+                when (b) {
+                    is Block.Actions -> StepList(b.parts)
+                    is Block.Single -> when (val p = b.part) {
+                        is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
+                        is MessagePart.Reasoning -> Aside(
+                            p.text,
+                            Yu.Lilac,
+                            italic = true,
+                            streaming = message.isStreaming && b.isLast,
+                        )
+                        is MessagePart.Commentary -> Aside(p.text, Yu.Sky, italic = false, streaming = false)
+                        is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
+                        else -> Unit
+                    }
+                }
+            }
+            val waiting = message.parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }
+            if (message.isStreaming && !hasText && !waiting && !running) TypingDots()
+            if (showInlineError && message.error != null) InlineError(message.error)
+        }
+    }
+}
+
+/** Reasoning or commentary: small text hanging off a coloured bar. */
+@Composable
+private fun Aside(text: String, bar: Color, italic: Boolean, streaming: Boolean) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawRect(bar, size = Size(2.dp.toPx(), size.height))
+            }
+            .padding(start = 10.dp),
+    ) {
+        if (streaming) ShimmerText("pensando…", fontSize = 12.sp)
+        Text(
+            text.ifBlank { "…" },
+            style = MaterialTheme.typography.bodySmall.copy(fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal),
+            color = Yu.Muted,
+        )
+    }
+}
+
+/** A run of actions as one card, one row per step. */
+@Composable
+private fun StepList(parts: List<MessagePart>) {
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.9f))
+            .border(1.dp, Yu.Outline.copy(alpha = 0.7f), shape),
+    ) {
+        parts.forEachIndexed { i, p ->
+            if (i > 0) HorizontalDivider(color = Yu.Outline.copy(alpha = 0.6f))
+            when (p) {
+                is MessagePart.ToolCall -> StepRow(
+                    title = p.tool,
+                    preview = p.argsPreview.lineSequence().firstOrNull { it.isNotBlank() }?.trim(),
+                    status = p.status,
+                    durationSec = p.durationSec,
+                    details = listOfNotNull(
+                        p.argsPreview.takeIf { it.isNotBlank() }?.let { "Argumentos" to it },
+                        p.resultPreview?.takeIf { it.isNotBlank() }?.let { "Resultado" to it },
+                    ),
+                )
+                is MessagePart.Subagent -> StepRow(
+                    title = "Subagente",
+                    preview = p.summary,
+                    status = p.status,
+                    durationSec = p.durationSec,
+                    details = listOf("Resumen" to p.summary),
+                    isSubagent = true,
+                )
+                else -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepRow(
+    title: String,
+    preview: String?,
+    status: ToolStatus,
+    durationSec: Double?,
+    details: List<Pair<String, String>>,
+    isSubagent: Boolean = false,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = details.isNotEmpty()) { expanded = !expanded }
+            .animateContentSize()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            when (status) {
+                ToolStatus.RUNNING -> CircularProgressIndicator(
+                    Modifier.size(15.dp), strokeWidth = 2.dp, color = Yu.Periwinkle,
+                )
+                ToolStatus.OK -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(17.dp), tint = Yu.Success)
+                ToolStatus.FAILED -> Icon(Icons.Rounded.Error, null, Modifier.size(17.dp), tint = Yu.Danger)
+            }
+            if (isSubagent) {
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Rounded.SmartToy, null, Modifier.size(15.dp), tint = Yu.PeriwinkleDeep)
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Yu.Indigo,
+                    fontFamily = if (isSubagent) null else FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!preview.isNullOrBlank() && !expanded) {
                     Text(
-                        message.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Yu.Danger,
+                        preview,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Yu.Muted,
+                        fontFamily = if (isSubagent) null else FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (durationSec != null) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "%.1f s".format(durationSec),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Yu.Muted,
+                )
+            }
+            if (details.isNotEmpty()) {
+                Spacer(Modifier.width(2.dp))
+                Chevron(expanded)
+            }
+        }
+        AnimatedVisibility(expanded && details.isNotEmpty()) {
+            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                details.forEach { (label, body) ->
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = Yu.Muted)
+                    Text(
+                        body.take(2000),
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Yu.Indigo)
+                            .padding(8.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = Yu.SkySoft,
                     )
                 }
             }
@@ -194,45 +449,6 @@ private fun WorkSummary(parts: List<MessagePart>, streaming: Boolean, open: Bool
 }
 
 @Composable
-private fun ReasoningSection(text: String, streaming: Boolean, detailsExpanded: Boolean) {
-    var expanded by remember(detailsExpanded) { mutableStateOf(detailsExpanded) }
-    val shape = RoundedCornerShape(14.dp)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(Yu.LilacSoft)
-            .clickable { expanded = !expanded }
-            .animateContentSize()
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Psychology, null, Modifier.size(18.dp), tint = Yu.PeriwinkleDeep)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "Razonamiento",
-                style = MaterialTheme.typography.labelLarge,
-                color = Yu.PeriwinkleDeep,
-            )
-            if (streaming) {
-                Spacer(Modifier.width(8.dp))
-                ShimmerText("pensando…")
-            }
-            Spacer(Modifier.weight(1f))
-            Chevron(expanded)
-        }
-        AnimatedVisibility(expanded) {
-            Text(
-                text.ifBlank { "…" },
-                Modifier.padding(top = 8.dp),
-                style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
-                color = Yu.Muted,
-            )
-        }
-    }
-}
-
-@Composable
 private fun Chevron(expanded: Boolean) {
     val angle by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
     Icon(
@@ -242,137 +458,3 @@ private fun Chevron(expanded: Boolean) {
     )
 }
 
-@Composable
-private fun ActionsGroup(parts: List<MessagePart>, detailsExpanded: Boolean) {
-    var open by remember(detailsExpanded) { mutableStateOf(detailsExpanded || parts.size <= 3) }
-    val anyRunning = parts.any {
-        (it is MessagePart.ToolCall && it.status == ToolStatus.RUNNING) ||
-            (it is MessagePart.Subagent && it.status == ToolStatus.RUNNING)
-    }
-    Column(Modifier.fillMaxWidth().animateContentSize()) {
-        Row(
-            Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { open = !open }
-                .padding(vertical = 2.dp, horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (anyRunning) {
-                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Yu.Periwinkle)
-            } else {
-                Icon(Icons.Rounded.Build, null, Modifier.size(14.dp), tint = Yu.Muted)
-            }
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "Acciones · ${parts.size}",
-                style = MaterialTheme.typography.labelMedium,
-                color = Yu.Muted,
-            )
-            Spacer(Modifier.width(2.dp))
-            Chevron(open)
-        }
-        AnimatedVisibility(open) {
-            Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                parts.forEach { p ->
-                    when (p) {
-                        is MessagePart.ToolCall -> ActionRow(
-                            title = p.tool,
-                            status = p.status,
-                            durationSec = p.durationSec,
-                            details = listOfNotNull(
-                                p.argsPreview.takeIf { it.isNotBlank() }?.let { "Argumentos" to it },
-                                p.resultPreview?.takeIf { it.isNotBlank() }?.let { "Resultado" to it },
-                            ),
-                            detailsExpanded = detailsExpanded,
-                        )
-                        is MessagePart.Subagent -> ActionRow(
-                            title = "Subagente: ${p.summary}",
-                            status = p.status,
-                            durationSec = p.durationSec,
-                            details = listOf("Resumen" to p.summary),
-                            detailsExpanded = detailsExpanded,
-                            isSubagent = true,
-                        )
-                        else -> Unit
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ActionRow(
-    title: String,
-    status: ToolStatus,
-    durationSec: Double?,
-    details: List<Pair<String, String>>,
-    detailsExpanded: Boolean,
-    isSubagent: Boolean = false,
-) {
-    var expanded by remember(detailsExpanded) { mutableStateOf(detailsExpanded) }
-    val shape = RoundedCornerShape(12.dp)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(Yu.SkySoft.copy(alpha = 0.6f))
-            .clickable(enabled = details.isNotEmpty()) { expanded = !expanded }
-            .animateContentSize()
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            when (status) {
-                ToolStatus.RUNNING -> CircularProgressIndicator(
-                    Modifier.size(16.dp), strokeWidth = 2.dp, color = Yu.Periwinkle,
-                )
-                ToolStatus.OK -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(18.dp), tint = Yu.Success)
-                ToolStatus.FAILED -> Icon(Icons.Rounded.Error, null, Modifier.size(18.dp), tint = Yu.Danger)
-            }
-            if (isSubagent) {
-                Spacer(Modifier.width(6.dp))
-                Icon(Icons.Rounded.SmartToy, null, Modifier.size(16.dp), tint = Yu.PeriwinkleDeep)
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                title,
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.labelLarge,
-                color = Yu.Indigo,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (durationSec != null) {
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "%.1f s".format(durationSec),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Yu.Muted,
-                )
-            }
-            if (details.isNotEmpty()) {
-                Spacer(Modifier.width(2.dp))
-                Chevron(expanded)
-            }
-        }
-        AnimatedVisibility(expanded && details.isNotEmpty()) {
-            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                details.forEach { (label, body) ->
-                    Text(label, style = MaterialTheme.typography.labelSmall, color = Yu.Muted)
-                    Text(
-                        body.take(2000),
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(alpha = 0.85f))
-                            .padding(8.dp),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        color = Yu.Indigo,
-                    )
-                }
-            }
-        }
-    }
-}

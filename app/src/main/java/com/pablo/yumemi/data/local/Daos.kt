@@ -59,3 +59,15 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE threadId NOT IN (SELECT id FROM threads)")
     suspend fun deleteOrphans()
 }
+
+@Dao
+interface CronResultDao {
+    @Query("SELECT * FROM cron_results ORDER BY runAt DESC")
+    fun observeAll(): Flow<List<CronResultEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(results: List<CronResultEntity>)
+
+    @Query("DELETE FROM cron_results WHERE id = :id")
+    suspend fun delete(id: String)
+}

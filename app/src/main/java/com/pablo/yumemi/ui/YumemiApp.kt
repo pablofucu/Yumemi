@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.MarkEmailRead
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -43,6 +44,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.pablo.yumemi.AppViewModelProvider
 import com.pablo.yumemi.ui.chat.ChatScreen
+import com.pablo.yumemi.ui.cron.CronResultsScreen
 import com.pablo.yumemi.ui.cron.CronScreen
 import com.pablo.yumemi.ui.settings.SettingsScreen
 import com.pablo.yumemi.ui.settings.SettingsViewModel
@@ -54,24 +56,26 @@ object Routes {
     const val CHAT = "chat/{threadId}"
     const val SETTINGS = "settings"
     const val CRON = "cron"
+    const val RESULTS = "cron_results"
     fun chat(threadId: String) = "chat/${Uri.encode(threadId)}"
 }
 
 private const val DUR = 380
 private const val TAB_DUR = 220
 
-private val TAB_ROUTES = setOf(Routes.THREADS, Routes.CRON)
+private val TAB_ROUTES = setOf(Routes.THREADS, Routes.CRON, Routes.RESULTS)
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val TABS = listOf(
     Tab(Routes.THREADS, "Chats", Icons.Rounded.Forum),
     Tab(Routes.CRON, "Cronjobs", Icons.Rounded.Schedule),
+    Tab(Routes.RESULTS, "Resultados", Icons.Rounded.MarkEmailRead),
 )
 
 private fun NavBackStackEntry.isTab(): Boolean = destination.route in TAB_ROUTES
 
-// Switching between the two tabs fades; anything else falls back to the NavHost slide (null).
+// Switching between tabs fades; anything else falls back to the NavHost slide (null).
 private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabEnter(): EnterTransition? =
     if (initialState.isTab() && targetState.isTab()) fadeIn(tween(TAB_DUR)) else null
 
@@ -158,6 +162,15 @@ fun YumemiApp() {
             popExitTransition = { tabExit() },
         ) {
             CronScreen()
+        }
+        composable(
+            route = Routes.RESULTS,
+            enterTransition = { tabEnter() },
+            exitTransition = { tabExit() },
+            popEnterTransition = { tabEnter() },
+            popExitTransition = { tabExit() },
+        ) {
+            CronResultsScreen()
         }
         composable(
             route = Routes.CHAT,

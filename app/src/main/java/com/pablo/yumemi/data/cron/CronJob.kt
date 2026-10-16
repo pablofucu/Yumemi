@@ -34,6 +34,8 @@ data class CronJob(
     val deliver: String?,
     val execStatus: String?,
     val execError: String?,
+    /** Text the last run produced (the "daily message"), when Hermes exposes it. */
+    val lastOutput: String? = null,
 ) {
     /** Name, or the first ~40 characters of the prompt when the job has none. */
     val displayName: String
@@ -56,7 +58,23 @@ data class CronJob(
 
     val errorText: String?
         get() = (lastError ?: execError)?.takeIf { it.isNotBlank() }
+
+    /** The last run as a stored result, or null when it produced no message or failed. */
+    fun toResult(): CronResult? {
+        val text = lastOutput?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (lastRunAt <= 0 || status == CronStatus.FAILED) return null
+        return CronResult(id = "$id:$lastRunAt", jobId = id, jobName = displayName, runAt = lastRunAt, text = text)
+    }
 }
+
+/** One message produced by a cron job run. */
+data class CronResult(
+    val id: String,
+    val jobId: String,
+    val jobName: String,
+    val runAt: Long,
+    val text: String,
+)
 
 /** Defensive parser for the Hermes cron REST API. Never throws on odd bodies. */
 object CronParser {
@@ -76,6 +94,11 @@ object CronParser {
         val inner = root["job"] as? JsonObject ?: root
         return parseJob(inner)
     }
+
+    /** Hermes does not document where a run's message lives, so try the likely names. */
+    private val OUTPUT_KEYS = arrayOf(
+        "output", "result", "response", "final_response", "last_output", "last_response", "last_result",
+    )
 
     private fun parseJob(o: JsonObject): CronJob? {
         val id = o.str("id") ?: return null
@@ -106,6 +129,7 @@ object CronParser {
             deliver = o.str("deliver"),
             execStatus = exec?.str("status"),
             execError = exec?.str("error"),
+            lastOutput = exec?.str(*OUTPUT_KEYS) ?: o.str(*OUTPUT_KEYS),
         )
     }
 }

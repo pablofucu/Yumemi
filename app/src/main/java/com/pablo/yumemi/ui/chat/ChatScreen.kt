@@ -89,6 +89,9 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import com.pablo.yumemi.domain.YumemiMood
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.graphics.SolidColor
 
 @Composable
 fun ChatScreen(onBack: () -> Unit) {
@@ -200,7 +203,7 @@ fun ChatScreen(onBack: () -> Unit) {
                                 containerColor = Color.White,
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Mostrar detalles") },
+                                    text = { Text("Vista detallada") },
                                     trailingIcon = {
                                         Switch(checked = showDetails, onCheckedChange = { showDetails = it })
                                     },
@@ -234,6 +237,8 @@ fun ChatScreen(onBack: () -> Unit) {
                         talking = talking,
                         // Folds itself while reading older messages.
                         expanded = statusOpen && atBottom,
+                        detailsOn = showDetails,
+                        onDetails = { showDetails = !showDetails },
                         onToggle = {
                             if (statusOpen && !atBottom) {
                                 stick = true
@@ -295,6 +300,19 @@ fun ChatScreen(onBack: () -> Unit) {
                             shape = CircleShape,
                         ) { Icon(Icons.Rounded.KeyboardArrowDown, "Ir al final") }
                     }
+                }
+                AnimatedVisibility(
+                    visible = !state.isSending && input.isBlank() && errorText == null,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    SuggestionRow(
+                        if (state.messages.isEmpty()) StarterSuggestions else FollowUpSuggestions,
+                        onPick = {
+                            vm.send(it)
+                            stick = true
+                        },
+                    )
                 }
                 InputBar(
                     value = input,
@@ -359,6 +377,46 @@ private fun ErrorCard(
     }
 }
 
+private val StarterSuggestions = listOf(
+    "¿Qué sabes hacer?",
+    "Revisa mis tareas programadas",
+    "Cuéntame algo bonito",
+)
+
+private val FollowUpSuggestions = listOf(
+    "Explícamelo mejor",
+    "Hazlo más corto",
+    "Dame un ejemplo",
+    "Continúa",
+)
+
+/** One-tap replies above the input; they send straight away. */
+@Composable
+private fun SuggestionRow(items: List<String>, onPick: (String) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp)
+            .padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items.forEach { s ->
+            Text(
+                s,
+                Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.85f))
+                    .border(1.dp, Yu.Outline, CircleShape)
+                    .clickable { onPick(s) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = Yu.PeriwinkleDeep,
+            )
+        }
+    }
+}
+
 @Composable
 private fun InputBar(
     value: String,
@@ -398,7 +456,14 @@ private fun InputBar(
                 .size(52.dp)
                 .softShadow(if (active) 8.dp else 2.dp, CircleShape)
                 .clip(CircleShape)
-                .background(if (active) Yu.PrimaryBrush else androidx.compose.ui.graphics.SolidColor(Yu.Outline))
+                .background(
+                    when {
+                        isSending -> SolidColor(Color.White)
+                        active -> Yu.PrimaryBrush
+                        else -> SolidColor(Yu.Outline)
+                    },
+                )
+                .then(if (isSending) Modifier.border(2.dp, Yu.Periwinkle, CircleShape) else Modifier)
                 .clickable(enabled = active) { if (isSending) onStop() else onSend() },
             contentAlignment = Alignment.Center,
         ) {
@@ -406,7 +471,7 @@ private fun InputBar(
                 Icon(
                     if (sending) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send,
                     contentDescription = if (sending) "Detener" else "Enviar",
-                    tint = Color.White,
+                    tint = if (sending) Yu.Periwinkle else Color.White,
                     modifier = Modifier.size(24.dp),
                 )
             }
