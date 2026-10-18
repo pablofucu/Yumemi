@@ -41,7 +41,6 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mikepenz.markdown.m3.Markdown
 import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatMessage
 import com.pablo.yumemi.domain.MessagePart
@@ -145,7 +144,7 @@ private fun BubbleMessage(
     val hasText = message.parts.any { it is MessagePart.Text && it.text.isNotBlank() }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         MessageActions(message.copyableText()) {
-            SoftCard(Modifier.widthIn(max = 360.dp), shape = AssistantShape, elevation = 6.dp) {
+            SoftCard(Modifier.widthIn(max = 640.dp).fillMaxWidth(), shape = AssistantShape, elevation = 6.dp) {
                 Column(
                     Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -153,7 +152,7 @@ private fun BubbleMessage(
                     if (hasDetails) WorkSummary(message.parts, message.isStreaming, open = false, onToggle = onUnfold)
                     message.parts.forEach { p ->
                         when (p) {
-                            is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
+                            is MessagePart.Text -> if (p.text.isNotBlank()) YumemiMarkdown(p.text)
                             // Never folded: Hermes is waiting on the answer.
                             is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
                             else -> Unit
@@ -246,7 +245,7 @@ private fun TimelineMessage(
                     when (b) {
                         is Block.Actions -> StepList(b.parts)
                         is Block.Single -> when (val p = b.part) {
-                            is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
+                            is MessagePart.Text -> if (p.text.isNotBlank()) YumemiMarkdown(p.text)
                             is MessagePart.Reasoning -> Aside(
                                 p.text,
                                 Yu.Lilac,

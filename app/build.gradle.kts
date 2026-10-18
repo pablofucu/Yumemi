@@ -43,6 +43,9 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
+        // Screenshot tests write their PNGs on every run so CI can publish them.
+        unitTests.all { it.systemProperty("roborazzi.test.record", "true") }
     }
 
     packaging {
@@ -69,6 +72,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -88,6 +92,14 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.markdown.renderer.m3)
+    implementation(libs.markdown.renderer.code)
+    implementation(libs.highlights)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.roborazzi.junit.rule)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
 }

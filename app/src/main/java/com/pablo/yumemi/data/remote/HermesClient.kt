@@ -35,6 +35,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
+/** Per-request ephemeral system prompt telling Hermes that this app renders Markdown. */
+private const val RENDER_HINT =
+    "Client note from Yumemi, the Android chat app the user is talking to you through. This replaces the earlier API-server note about plain text: this app renders GitHub-flavored Markdown (headings, bold, italic, strikethrough, bullet and numbered lists, tables, fenced code blocks with syntax highlighting, block quotes, links and horizontal rules). Use Markdown whenever it makes an answer clearer or easier to scan: a table for comparisons or key/value data, a fenced code block with its language for commands, code, logs and file contents, short ## headings and lists for long or multi-step answers. Keep casual, short replies as plain conversational text without headings. Images, raw HTML, math and MEDIA: tags are not rendered; give file paths and URLs as plain text or links."
+
 /** HTTP client for the Hermes Agent API server. */
 class HermesClient(private val settings: SettingsStore) {
 
@@ -284,6 +288,7 @@ class HermesClient(private val settings: SettingsStore) {
         val body = buildJsonObject {
             put("input", text)
             put("session_id", threadId)
+            put("instructions", RENDER_HINT)
         }.toString()
         val request = current(listOf("v1", "runs"))
             .header("Idempotency-Key", idempotencyKey)
@@ -321,7 +326,10 @@ class HermesClient(private val settings: SettingsStore) {
     // ---------- streaming ----------
 
     fun streamSessionChat(threadId: String, text: String): Flow<SseEvent> {
-        val body = buildJsonObject { put("input", text) }.toString().toRequestBody(jsonMedia)
+        val body = buildJsonObject {
+            put("input", text)
+            put("system_message", RENDER_HINT)
+        }.toString().toRequestBody(jsonMedia)
         val request = current(listOf("api", "sessions", threadId, "chat", "stream"))
             .header("Accept", "text/event-stream")
             .post(body)
@@ -336,6 +344,12 @@ class HermesClient(private val settings: SettingsStore) {
             put(
                 "messages",
                 buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            put("role", "system")
+                            put("content", RENDER_HINT)
+                        },
+                    )
                     add(
                         buildJsonObject {
                             put("role", "user")
