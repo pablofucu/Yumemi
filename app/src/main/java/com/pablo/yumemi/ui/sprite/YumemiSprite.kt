@@ -48,6 +48,9 @@ private data class Bust(val cx: Float, val cy: Float, val side: Float)
 
 private val BUST_STAND = Bust(352f, 175f, 300f)
 private val BUST_SHY = Bust(380f, 230f, 300f) // the shy pose leans, so her head sits lower
+/** Tighter crops: just her head, hat to chin. */
+private val HEAD_STAND = Bust(360f, 118f, 270f)
+private val HEAD_SHY = Bust(388f, 173f, 270f)
 
 private data class Layers(
     @DrawableRes val body: Int,
@@ -57,6 +60,7 @@ private data class Layers(
     val canTalk: Boolean,
 ) {
     val bust: Bust get() = if (body == R.drawable.yu_body_shy) BUST_SHY else BUST_STAND
+    val head: Bust get() = if (body == R.drawable.yu_body_shy) HEAD_SHY else HEAD_STAND
 }
 
 private fun layersFor(mood: YumemiMood): Layers = when (mood) {
@@ -71,7 +75,8 @@ private fun layersFor(mood: YumemiMood): Layers = when (mood) {
 
 /**
  * Layered sprite of Yumemi. Portrait (528:576) unless [face] is true, in which case it is a
- * square avatar crop of her head and shoulders that follows the current pose.
+ * square avatar crop of her head and shoulders (just her head with [headOnly]) that follows the
+ * current pose.
  */
 @Composable
 fun YumemiSprite(
@@ -79,6 +84,7 @@ fun YumemiSprite(
     modifier: Modifier = Modifier,
     talking: Boolean = false,
     face: Boolean = false,
+    headOnly: Boolean = false,
 ) {
     val happy = mood == YumemiMood.HAPPY
     // Happy alternates the wink with a bright smile so the face keeps moving.
@@ -137,7 +143,7 @@ fun YumemiSprite(
     }
 
     if (face) {
-        val bust = layers.bust
+        val bust = if (headOnly) layers.head else layers.bust
         BoxWithConstraints(modifier.aspectRatio(1f).clipToBounds()) {
             val s = maxWidth
             val liftPx = lift
