@@ -73,15 +73,17 @@ private val AssistantShape = RoundedCornerShape(6.dp, 22.dp, 22.dp, 22.dp)
 fun UserBubble(message: ChatMessage, modifier: Modifier = Modifier) {
     val text = message.parts.filterIsInstance<MessagePart.Text>().joinToString("\n\n") { it.text }
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Box(
-            Modifier
-                .widthIn(max = 320.dp)
-                .softShadow(6.dp, UserShape)
-                .clip(UserShape)
-                .background(Yu.UserBubbleBrush)
-                .padding(horizontal = 16.dp, vertical = 11.dp),
-        ) {
-            Text(text, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        MessageActions(text, alignEnd = true) {
+            Box(
+                Modifier
+                    .widthIn(max = 320.dp)
+                    .softShadow(6.dp, UserShape)
+                    .clip(UserShape)
+                    .background(Yu.UserBubbleBrush)
+                    .padding(horizontal = 16.dp, vertical = 11.dp),
+            ) {
+                Text(text, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+            }
         }
     }
 }
@@ -142,23 +144,25 @@ private fun BubbleMessage(
 ) {
     val hasText = message.parts.any { it is MessagePart.Text && it.text.isNotBlank() }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        SoftCard(Modifier.widthIn(max = 360.dp), shape = AssistantShape, elevation = 6.dp) {
-            Column(
-                Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (hasDetails) WorkSummary(message.parts, message.isStreaming, open = false, onToggle = onUnfold)
-                message.parts.forEach { p ->
-                    when (p) {
-                        is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
-                        // Never folded: Hermes is waiting on the answer.
-                        is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
-                        else -> Unit
+        MessageActions(message.copyableText()) {
+            SoftCard(Modifier.widthIn(max = 360.dp), shape = AssistantShape, elevation = 6.dp) {
+                Column(
+                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (hasDetails) WorkSummary(message.parts, message.isStreaming, open = false, onToggle = onUnfold)
+                    message.parts.forEach { p ->
+                        when (p) {
+                            is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
+                            // Never folded: Hermes is waiting on the answer.
+                            is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
+                            else -> Unit
+                        }
                     }
+                    val waiting = message.parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }
+                    if (message.isStreaming && !hasText && !waiting) TypingDots()
+                    if (showInlineError && message.error != null) InlineError(message.error)
                 }
-                val waiting = message.parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }
-                if (message.isStreaming && !hasText && !waiting) TypingDots()
-                if (showInlineError && message.error != null) InlineError(message.error)
             }
         }
     }
@@ -195,68 +199,70 @@ private fun TimelineMessage(
         message.isStreaming -> "pensando"
         else -> "hecho"
     }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .drawBehind {
-                drawLine(
-                    Yu.Outline,
-                    start = Offset(RailX.toPx(), RailTop.toPx()),
-                    end = Offset(RailX.toPx(), size.height - 4.dp.toPx()),
-                    strokeWidth = 2.dp.toPx(),
-                    cap = StrokeCap.Round,
-                )
-            },
-    ) {
+    MessageActions(message.copyableText(), Modifier.fillMaxWidth()) {
         Box(
             Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(Yu.SkySoft)
-                .border(1.dp, Yu.Lilac.copy(alpha = 0.6f), CircleShape),
+                .fillMaxWidth()
+                .drawBehind {
+                    drawLine(
+                        Yu.Outline,
+                        start = Offset(RailX.toPx(), RailTop.toPx()),
+                        end = Offset(RailX.toPx(), size.height - 4.dp.toPx()),
+                        strokeWidth = 2.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+                },
         ) {
-            YumemiSprite(YumemiMood.IDLE, Modifier.fillMaxSize(), face = true)
-        }
-        Column(
-            Modifier.padding(start = 38.dp).animateContentSize(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
+            Box(
                 Modifier
-                    .height(28.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onFold)
-                    .padding(horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Yu.SkySoft)
+                    .border(1.dp, Yu.Lilac.copy(alpha = 0.6f), CircleShape),
             ) {
-                Text(
-                    "Yumemi · $state",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Yu.Muted,
-                )
-                Spacer(Modifier.width(2.dp))
-                Chevron(true)
+                YumemiSprite(YumemiMood.IDLE, Modifier.fillMaxSize(), face = true)
             }
-            blocks.forEach { b ->
-                when (b) {
-                    is Block.Actions -> StepList(b.parts)
-                    is Block.Single -> when (val p = b.part) {
-                        is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
-                        is MessagePart.Reasoning -> Aside(
-                            p.text,
-                            Yu.Lilac,
-                            italic = true,
-                            streaming = message.isStreaming && b.isLast,
-                        )
-                        is MessagePart.Commentary -> Aside(p.text, Yu.Sky, italic = false, streaming = false)
-                        is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
-                        else -> Unit
+            Column(
+                Modifier.padding(start = 38.dp).animateContentSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    Modifier
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onFold)
+                        .padding(horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Yumemi · $state",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Yu.Muted,
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Chevron(true)
+                }
+                blocks.forEach { b ->
+                    when (b) {
+                        is Block.Actions -> StepList(b.parts)
+                        is Block.Single -> when (val p = b.part) {
+                            is MessagePart.Text -> if (p.text.isNotBlank()) Markdown(content = p.text)
+                            is MessagePart.Reasoning -> Aside(
+                                p.text,
+                                Yu.Lilac,
+                                italic = true,
+                                streaming = message.isStreaming && b.isLast,
+                            )
+                            is MessagePart.Commentary -> Aside(p.text, Yu.Sky, italic = false, streaming = false)
+                            is MessagePart.Approval -> ApprovalCard(p) { choice -> onApprovalChoice(p.requestId, choice) }
+                            else -> Unit
+                        }
                     }
                 }
+                val waiting = message.parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }
+                if (message.isStreaming && !hasText && !waiting && !running) TypingDots()
+                if (showInlineError && message.error != null) InlineError(message.error)
             }
-            val waiting = message.parts.any { it is MessagePart.Approval && it.status == ApprovalStatus.PENDING }
-            if (message.isStreaming && !hasText && !waiting && !running) TypingDots()
-            if (showInlineError && message.error != null) InlineError(message.error)
         }
     }
 }
