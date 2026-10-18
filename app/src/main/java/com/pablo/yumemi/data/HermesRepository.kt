@@ -5,6 +5,7 @@ import com.pablo.yumemi.data.chat.EventMapper
 import com.pablo.yumemi.data.chat.PartCodec
 import com.pablo.yumemi.data.chat.StreamEvent
 import com.pablo.yumemi.data.chat.TranscriptParser
+import com.pablo.yumemi.data.chat.isCronRun
 import com.pablo.yumemi.data.local.MessageEntity
 import com.pablo.yumemi.data.local.ThreadEntity
 import com.pablo.yumemi.data.local.YumemiDatabase
@@ -35,7 +36,8 @@ class HermesRepository(
         threadDao.observe(id).map { it?.toDomain() }
 
     suspend fun refreshThreads() {
-        val remote = client.listSessions()
+        // Cron runs are sessions too; they live in the Resultados tab, not among the chats.
+        val remote = client.listSessions().filterNot { it.isCronRun() }
         val now = System.currentTimeMillis()
         db.withTransaction {
             val existing = threadDao.getAll().associateBy { it.id }

@@ -1,8 +1,12 @@
 package com.pablo.yumemi
 
+import com.pablo.yumemi.data.chat.SessionParser
+import com.pablo.yumemi.data.chat.TranscriptParser
+import com.pablo.yumemi.data.chat.isCronRun
 import com.pablo.yumemi.data.cron.CronParser
 import com.pablo.yumemi.data.cron.CronStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -62,19 +66,26 @@ class CronParserTest {
 class CronResultTest {
 
     @Test
-    fun outputBecomesResultKeyedByRun() {
-        val body = """{"job":{"id":"j1","name":"Mensaje diario","last_run_at":1760432400,"last_status":"ok",
-            "latest_execution":{"status":"completed","output":"  Buenos días  "}}}"""
-        val r = CronParser.parseOne(body)!!.toResult()!!
-        assertEquals("j1:1760432400000", r.id)
-        assertEquals("Mensaje diario", r.jobName)
-        assertEquals("Buenos días", r.text)
+    fun finalAnswerIsLastAssistantTextWithoutToolCalls() {
+        val body = """{"data":[
+          {"role":"user","content":"Dame el resumen"},
+          {"role":"assistant","content":"Voy a mirar","tool_calls":[{"id":"c1","function":{"name":"web","arguments":"{}"}}]},
+          {"role":"tool","tool_call_id":"c1","content":"..."},
+          {"role":"assistant","content":"  Buenos días  "}
+        ]}"""
+        assertEquals("Buenos días", TranscriptParser.finalAssistantText(body))
+        assertNull(TranscriptParser.finalAssistantText("""{"data":[{"role":"user","content":"x"}]}"""))
     }
 
     @Test
-    fun noOutputOrFailedRunGivesNoResult() {
-        assertNull(CronParser.parseOne("""{"job":{"id":"a","last_run_at":1760432400}}""")!!.toResult())
-        val failed = """{"job":{"id":"a","last_run_at":1760432400,"last_status":"error","last_response":"x"}}"""
-        assertNull(CronParser.parseOne(failed)!!.toResult())
+    fun cronSessionsAreRecognised() {
+        val list = SessionParser.parseList(
+            """{"data":[{"id":"cron_ab12_20261018_090000","source":"cron","started_at":1760432400,"ended_at":1760432460},
+              {"id":"s1","source":"api_server"}]}""",
+        )
+        assertTrue(list[0].isCronRun())
+        assertEquals(1760432400000, list[0].startedAt)
+        assertTrue(list[0].endedAt > 0)
+        assertFalse(list[1].isCronRun())
     }
 }

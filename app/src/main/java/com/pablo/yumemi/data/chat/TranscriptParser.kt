@@ -108,6 +108,28 @@ object TranscriptParser {
         return result
     }
 
+    /**
+     * The final answer of a session: the text of the last assistant message that does not call
+     * tools. This is what a cron run delivers (e.g. to Telegram).
+     */
+    fun finalAssistantText(body: String): String? {
+        val root = parseJson(body) ?: return null
+        val array: JsonArray = when (root) {
+            is JsonArray -> root
+            is JsonObject -> root.arr("messages", "data", "items", "results") ?: return null
+            else -> return null
+        }
+        for (el in array.reversed()) {
+            val o = el as? JsonObject ?: continue
+            val role = o.str("role")?.lowercase() ?: continue
+            if (role !in setOf("assistant", "ai", "model")) continue
+            if (toolCalls(o["tool_calls"]).isNotEmpty()) continue
+            val text = contentText(o["content"])?.trim()
+            if (!text.isNullOrEmpty()) return text
+        }
+        return null
+    }
+
     private fun toolCalls(e: JsonElement?): List<MessagePart.ToolCall> {
         val arr: JsonArray = when {
             e is JsonArray -> e
@@ -141,7 +163,21 @@ object TranscriptParser {
 }
 
 /** Parsed entry of GET /api/sessions. */
-data class RemoteSession(val id: String, val title: String, val updatedAt: Long, val preview: String)
+data class RemoteSession(
+    val id: String,
+    val title: String,
+    val updatedAt: Long,
+    val preview: String,
+    /** Where the session came from ("api_server", "telegram", "cron"...), when reported. */
+    val source: String? = null,
+    val startedAt: Long = 0,
+    /** 0 while the session is still open. */
+    val endedAt: Long = 0,
+)
+
+/** Hermes names cron run sessions `cron_<jobId>_<yyyyMMdd_HHmmss>` and tags them with source "cron". */
+fun RemoteSession.isCronRun(): Boolean =
+    source.equals("cron", ignoreCase = true) || id.startsWith("cron_")
 
 object SessionParser {
     fun parseOne(o: JsonObject): RemoteSession? {
@@ -151,6 +187,9 @@ object SessionParser {
             title = o.str("title", "name").orEmpty(),
             updatedAt = o.time("updated_at", "last_active", "last_activity", "last_message_at", "ended_at", "started_at", "created_at"),
             preview = (o.str("preview", "last_message", "summary", "snippet") ?: "").truncated(200),
+            source = o.str("source", "platform"),
+            startedAt = o.time("started_at", "created_at"),
+            endedAt = o.time("ended_at"),
         )
     }
 

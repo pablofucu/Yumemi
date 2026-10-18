@@ -58,13 +58,6 @@ data class CronJob(
 
     val errorText: String?
         get() = (lastError ?: execError)?.takeIf { it.isNotBlank() }
-
-    /** The last run as a stored result, or null when it produced no message or failed. */
-    fun toResult(): CronResult? {
-        val text = lastOutput?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        if (lastRunAt <= 0 || status == CronStatus.FAILED) return null
-        return CronResult(id = "$id:$lastRunAt", jobId = id, jobName = displayName, runAt = lastRunAt, text = text)
-    }
 }
 
 /** One message produced by a cron job run. */

@@ -219,6 +219,17 @@ class HermesClient(private val settings: SettingsStore) {
         return all.values.toList()
     }
 
+    /** The most recent sessions started by cron runs (one page). */
+    suspend fun listCronSessions(limit: Int = 50): List<RemoteSession> =
+        SessionParser.parseList(
+            fetch(
+                current(
+                    listOf("api", "sessions"),
+                    mapOf("source" to "cron", "limit" to limit.toString()),
+                ).get().build(),
+            ),
+        )
+
     suspend fun createSession(title: String? = null): RemoteSession {
         val body = buildJsonObject { if (!title.isNullOrBlank()) put("title", title) }.toString()
         val text = fetch(current(listOf("api", "sessions")).post(body.toRequestBody(jsonMedia)).build())

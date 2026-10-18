@@ -68,6 +68,9 @@ interface CronResultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(results: List<CronResultEntity>)
 
+    @Query("SELECT id FROM cron_results")
+    suspend fun ids(): List<String>
+
     @Query("DELETE FROM cron_results WHERE id = :id")
     suspend fun delete(id: String)
 }
