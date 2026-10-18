@@ -130,7 +130,10 @@ class ChatViewModel(
                 return@launch
             }
             try {
-                server.value = repo.fetchTranscript(threadId)
+                val transcript = repo.fetchTranscript(threadId)
+                server.value = transcript
+                // Mid-turn the server copy lags behind: the turn records its own messages.
+                if (!runner.isRunning(threadId)) repo.recordTranscript(threadId, transcript)
                 internal.update { it.copy(connection = ConnectionState.Connected) }
             } catch (e: CancellationException) {
                 throw e

@@ -12,8 +12,22 @@ data class ChatThread(
     val id: String,          // Hermes session id
     val title: String,
     val updatedAt: Long,     // epoch millis
-    val preview: String,     // last message snippet, may be empty
+    val preview: String,     // snippet the server reports (usually the first message), may be empty
+    /** Snippet of the latest message seen locally; empty when unknown. */
+    val lastMessage: String = "",
+    val lastFromUser: Boolean = false,
+    /** Where the session lives ("api_server", "telegram", "cli"...), when reported. */
+    val source: String? = null,
+    /** Local-only favourite flag. */
+    val pinned: Boolean = false,
+    /** Non-null while a turn is running, here or from another client. */
+    val activity: ThreadActivity? = null,
 )
+
+enum class ActivityKind { THINKING, WRITING, TERMINAL, WAITING }
+
+/** What a thread is doing right now; [detail] is the command for TERMINAL. */
+data class ThreadActivity(val kind: ActivityKind, val detail: String = "")
 
 enum class Role { USER, ASSISTANT }
 

@@ -1,5 +1,6 @@
 package com.pablo.yumemi.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -9,7 +10,15 @@ data class ThreadEntity(
     @PrimaryKey val id: String,
     val title: String,
     val updatedAt: Long,
+    /** Snippet reported by the server (usually the first message). */
     val preview: String,
+    /** Snippet of the latest message, from a finished turn or a fetched transcript. */
+    @ColumnInfo(defaultValue = "") val lastMessage: String = "",
+    @ColumnInfo(defaultValue = "0") val lastFromUser: Boolean = false,
+    /** Server updatedAt the [lastMessage] corresponds to; older than updatedAt means it may be stale. */
+    @ColumnInfo(defaultValue = "0") val lastAt: Long = 0,
+    val source: String? = null,
+    @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
 )
 
 @Entity(tableName = "messages", indices = [Index("threadId")])

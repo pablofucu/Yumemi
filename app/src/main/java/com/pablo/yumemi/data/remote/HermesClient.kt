@@ -224,6 +224,12 @@ class HermesClient(private val settings: SettingsStore) {
         return all.values.toList()
     }
 
+    /** The first page of sessions only: enough to watch the recently active ones. */
+    suspend fun listRecentSessions(limit: Int = FIRST_PAGE_SIZE): List<RemoteSession> =
+        SessionParser.parseList(
+            fetch(current(listOf("api", "sessions"), mapOf("limit" to limit.toString())).get().build()),
+        )
+
     /** The most recent sessions started by cron runs (one page). */
     suspend fun listCronSessions(limit: Int = 50): List<RemoteSession> =
         SessionParser.parseList(

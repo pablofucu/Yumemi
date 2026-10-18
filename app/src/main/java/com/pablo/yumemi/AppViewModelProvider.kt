@@ -16,7 +16,7 @@ object AppViewModelProvider {
     val Factory: ViewModelProvider.Factory = viewModelFactory {
         initializer {
             val c = yumemiApplication().container
-            ThreadListViewModel(c.repository, c.settings, c.networkMonitor)
+            ThreadListViewModel(c.repository, c.turnRunner, c.settings, c.networkMonitor)
         }
         initializer {
             val c = yumemiApplication().container

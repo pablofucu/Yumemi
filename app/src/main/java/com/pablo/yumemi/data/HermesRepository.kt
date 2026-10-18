@@ -5,6 +5,7 @@ import com.pablo.yumemi.data.chat.EventMapper
 import com.pablo.yumemi.data.chat.PartCodec
 import com.pablo.yumemi.data.chat.RemoteSession
 import com.pablo.yumemi.data.chat.StreamEvent
+import com.pablo.yumemi.data.chat.ThreadActivityRules
 import com.pablo.yumemi.data.chat.TranscriptParser
 import com.pablo.yumemi.data.chat.isCronRun
 import com.pablo.yumemi.data.local.MessageEntity
@@ -67,6 +68,11 @@ class HermesRepository(
                     title = r.title.ifBlank { old?.title.orEmpty() },
                     updatedAt = if (r.updatedAt > 0) r.updatedAt else (old?.updatedAt ?: now),
                     preview = r.preview.ifBlank { old?.preview.orEmpty() },
+                    lastMessage = old?.lastMessage.orEmpty(),
+                    lastFromUser = old?.lastFromUser ?: false,
+                    lastAt = old?.lastAt ?: 0,
+                    source = r.source ?: old?.source,
+                    pinned = old?.pinned ?: false,
                 )
             }
             threadDao.upsertAll(rows)
@@ -103,8 +109,48 @@ class HermesRepository(
     /** Raw stored title ("" when none). */
     suspend fun rawTitle(id: String): String? = threadDao.get(id)?.title
 
-    suspend fun touchThread(id: String, updatedAt: Long, preview: String) {
-        threadDao.touch(id, updatedAt, preview.replace(Regex("\\s+"), " ").trim().take(120))
+    /** Records [message] as the thread's latest message. */
+    suspend fun touchThread(id: String, message: ChatMessage) {
+        val snippet = ThreadActivityRules.snippetOf(message)
+        if (snippet.isEmpty()) return
+        threadDao.touch(id, message.createdAt, snippet, message.role == Role.USER)
+    }
+
+    suspend fun setPinned(id: String, pinned: Boolean) = threadDao.setPinned(id, pinned)
+
+    /** Stores the latest message of a server [transcript]; [serverUpdatedAt] is what it is valid for. */
+    suspend fun recordTranscript(id: String, transcript: List<ChatMessage>, serverUpdatedAt: Long = 0) {
+        val old = threadDao.get(id) ?: return
+        val at = maxOf(serverUpdatedAt, old.updatedAt)
+        val last = transcript.lastOrNull { ThreadActivityRules.snippetOf(it).isNotEmpty() }
+        if (last == null) {
+            // Nothing to show yet; remember it was checked so it is not fetched again until it changes.
+            threadDao.setLast(id, old.lastMessage, old.lastFromUser, at)
+        } else {
+            threadDao.setLast(id, ThreadActivityRules.snippetOf(last), last.role == Role.USER, at)
+        }
+    }
+
+    /** The most recently active sessions (one small page), stored like a regular refresh. */
+    suspend fun refreshRecent(): List<RemoteSession> {
+        val page = client.listRecentSessions().filterNot { it.isCronRun() }
+        upsertThreads(page)
+        return page
+    }
+
+    /** Threads whose latest message is unknown or older than their last activity, newest first. */
+    suspend fun threadsWithStaleLast(limit: Int): List<Pair<String, Long>> =
+        threadDao.getAll()
+            .filter { it.lastAt < it.updatedAt }
+            .sortedByDescending { it.updatedAt }
+            .take(limit)
+            .map { it.id to it.updatedAt }
+
+    /** Fetches a session's transcript, stores its latest message and returns that message. */
+    suspend fun inspectThread(id: String, serverUpdatedAt: Long): ChatMessage? {
+        val transcript = fetchTranscript(id)
+        recordTranscript(id, transcript, serverUpdatedAt)
+        return transcript.lastOrNull()
     }
 
     /** Sets the title from the first ~40 chars of [firstMessage] when the thread has none. */
@@ -172,7 +218,16 @@ class HermesRepository(
         }
     }
 
-    private fun ThreadEntity.toDomain() = ChatThread(id = id, title = title, updatedAt = updatedAt, preview = preview)
+    private fun ThreadEntity.toDomain() = ChatThread(
+        id = id,
+        title = title,
+        updatedAt = updatedAt,
+        preview = preview,
+        lastMessage = lastMessage,
+        lastFromUser = lastFromUser,
+        source = source,
+        pinned = pinned,
+    )
 
     private fun MessageEntity.toDomain() = ChatMessage(
         id = id,

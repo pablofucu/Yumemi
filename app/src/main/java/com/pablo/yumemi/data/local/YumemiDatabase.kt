@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [ThreadEntity::class, MessageEntity::class, CronResultEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class YumemiDatabase : RoomDatabase() {
@@ -24,6 +24,17 @@ abstract class YumemiDatabase : RoomDatabase() {
                         "`jobName` TEXT NOT NULL, `runAt` INTEGER NOT NULL, `text` TEXT NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_cron_results_runAt` ON `cron_results` (`runAt`)")
+            }
+        }
+
+        /** Latest-message snippet, source and favourites on threads. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `threads` ADD COLUMN `lastMessage` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `threads` ADD COLUMN `lastFromUser` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `threads` ADD COLUMN `lastAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `threads` ADD COLUMN `source` TEXT")
+                db.execSQL("ALTER TABLE `threads` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

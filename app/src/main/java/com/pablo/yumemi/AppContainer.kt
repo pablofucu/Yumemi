@@ -21,7 +21,7 @@ class AppContainer(context: Context) {
     val client: HermesClient by lazy { HermesClient(settings) }
     val database: YumemiDatabase by lazy {
         Room.databaseBuilder(appContext, YumemiDatabase::class.java, "yumemi.db")
-            .addMigrations(YumemiDatabase.MIGRATION_1_2)
+            .addMigrations(YumemiDatabase.MIGRATION_1_2, YumemiDatabase.MIGRATION_2_3)
             .fallbackToDestructiveMigration()
             .build()
     }

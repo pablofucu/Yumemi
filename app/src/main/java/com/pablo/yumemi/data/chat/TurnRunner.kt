@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -81,11 +82,20 @@ class TurnRunner(
 
     fun observe(threadId: String): StateFlow<LiveTurn?> = stateFor(threadId)
 
+    private val _running = MutableStateFlow<Map<String, LiveTurn>>(emptyMap())
+    /** Turns currently running in this app, by thread. */
+    val running: StateFlow<Map<String, LiveTurn>> = _running
+
+    private fun setState(threadId: String, turn: LiveTurn?) {
+        stateFor(threadId).value = turn
+        _running.update { m -> if (turn?.running == true) m + (threadId to turn) else m - threadId }
+    }
+
     fun isRunning(threadId: String): Boolean = stateFor(threadId).value?.running == true
 
     /** Forgets a finished turn (e.g. before retrying, so the old message is not shown again). */
     fun clear(threadId: String) {
-        if (!isRunning(threadId)) stateFor(threadId).value = null
+        if (!isRunning(threadId)) setState(threadId, null)
     }
 
     // ---------- public actions ----------
@@ -197,24 +207,25 @@ class TurnRunner(
         finishedAt: Long? = null,
         message: ChatMessage = a.assistant,
     ) {
-        stateFor(a.threadId).value = LiveTurn(
-            threadId = a.threadId,
-            message = message,
-            running = running,
-            error = error,
-            succeeded = succeeded,
-            finishedAt = finishedAt,
-            toolAfterTextCount = a.toolAfterText,
+        setState(
+            a.threadId,
+            LiveTurn(
+                threadId = a.threadId,
+                message = message,
+                running = running,
+                error = error,
+                succeeded = succeeded,
+                finishedAt = finishedAt,
+                toolAfterTextCount = a.toolAfterText,
+            ),
         )
     }
 
     /** Refreshes the parts of the shown message without changing anything else (approval cards). */
     private fun publishParts(a: Active) {
         a.assistant = a.assistant.copy(parts = a.acc.parts)
-        val flow = stateFor(a.threadId)
-        flow.value = flow.value?.let { cur ->
-            if (cur.message.id == a.assistant.id) cur.copy(message = cur.message.copy(parts = a.acc.parts)) else cur
-        }
+        val cur = stateFor(a.threadId).value ?: return
+        if (cur.message.id == a.assistant.id) setState(a.threadId, cur.copy(message = cur.message.copy(parts = a.acc.parts)))
     }
 
     private suspend fun execute(a: Active, text: String?, resume: Pending?) {
@@ -225,8 +236,9 @@ class TurnRunner(
         try {
             if (text != null) {
                 val userAt = a.assistant.createdAt - 1
-                repo.saveMessage(threadId, ChatMessage(UUID.randomUUID().toString(), Role.USER, listOf(MessagePart.Text(text)), userAt))
-                repo.touchThread(threadId, userAt, text)
+                val userMsg = ChatMessage(UUID.randomUUID().toString(), Role.USER, listOf(MessagePart.Text(text)), userAt)
+                repo.saveMessage(threadId, userMsg)
+                repo.touchThread(threadId, userMsg)
                 // Separate job: the title is still set if the user stops the turn.
                 scope.launch { repo.autoTitleIfBlank(threadId, text) }
             }
@@ -272,9 +284,7 @@ class TurnRunner(
                 if (!keepStored && (finalMsg.parts.isNotEmpty() || finalMsg.error != null)) {
                     try {
                         repo.saveMessage(threadId, finalMsg)
-                        val snippet = finalMsg.parts.filterIsInstance<MessagePart.Text>()
-                            .joinToString(" ") { it.text }
-                        if (snippet.isNotBlank()) repo.touchThread(threadId, System.currentTimeMillis(), snippet)
+                        repo.touchThread(threadId, finalMsg.copy(createdAt = System.currentTimeMillis()))
                     } catch (e: Exception) {
                         // Persisting is best effort.
                     }

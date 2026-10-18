@@ -35,8 +35,19 @@ interface ThreadDao {
     @Query("UPDATE threads SET title = :title WHERE id = :id")
     suspend fun setTitle(id: String, title: String)
 
-    @Query("UPDATE threads SET updatedAt = :updatedAt, preview = :preview WHERE id = :id")
-    suspend fun touch(id: String, updatedAt: Long, preview: String)
+    /** A message just happened here: bumps the thread and records it as the latest. */
+    @Query(
+        "UPDATE threads SET updatedAt = MAX(updatedAt, :at), lastMessage = :text, lastFromUser = :fromUser, " +
+            "lastAt = MAX(updatedAt, :at) WHERE id = :id",
+    )
+    suspend fun touch(id: String, at: Long, text: String, fromUser: Boolean)
+
+    /** Latest message read from the server transcript, valid as of the server's [lastAt]. */
+    @Query("UPDATE threads SET lastMessage = :text, lastFromUser = :fromUser, lastAt = :lastAt WHERE id = :id")
+    suspend fun setLast(id: String, text: String, fromUser: Boolean, lastAt: Long)
+
+    @Query("UPDATE threads SET pinned = :pinned WHERE id = :id")
+    suspend fun setPinned(id: String, pinned: Boolean)
 }
 
 @Dao
