@@ -105,9 +105,12 @@ class ThreadListViewModel(
     /** One refresh attempt; updates the state and returns the failure, if any. */
     private suspend fun refreshOnce(): Exception? =
         try {
-            repo.refreshThreads()
+            // Connected as soon as the first page is in; the rest of the list keeps syncing.
+            repo.refreshThreads(onFirstPage = {
+                internal.update { it.copy(connection = ConnectionState.Connected, error = null) }
+                flashHappy()
+            })
             internal.update { it.copy(connection = ConnectionState.Connected, isRefreshing = false) }
-            flashHappy()
             null
         } catch (e: CancellationException) {
             throw e

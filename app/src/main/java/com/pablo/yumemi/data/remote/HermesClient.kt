@@ -198,12 +198,15 @@ class HermesClient(private val settings: SettingsStore) {
 
     // ---------- sessions ----------
 
-    /** Lists all sessions, paging until the server runs out. */
-    suspend fun listSessions(): List<RemoteSession> {
+    /**
+     * Lists all sessions, paging until the server runs out. The first page is small so [onPage] can
+     * show recent threads quickly; cron runs pile up and can make the full listing take many requests.
+     */
+    suspend fun listSessions(onPage: suspend (List<RemoteSession>) -> Unit = {}): List<RemoteSession> {
         val all = LinkedHashMap<String, RemoteSession>()
-        val pageSize = 100
         var offset = 0
-        repeat(10) {
+        var pageSize = FIRST_PAGE_SIZE
+        repeat(MAX_PAGES) {
             val body = fetch(
                 current(
                     listOf("api", "sessions"),
@@ -213,8 +216,10 @@ class HermesClient(private val settings: SettingsStore) {
             val page = SessionParser.parseList(body)
             val before = all.size
             for (s in page) all.putIfAbsent(s.id, s)
+            onPage(page)
             if (page.size < pageSize || all.size == before) return all.values.toList()
-            offset += pageSize
+            offset += page.size
+            pageSize = PAGE_SIZE
         }
         return all.values.toList()
     }
@@ -374,5 +379,8 @@ class HermesClient(private val settings: SettingsStore) {
     private companion object {
         val IDEMPOTENT_METHODS = setOf("GET", "HEAD", "PATCH", "PUT", "DELETE")
         val RETRY_DELAYS_MS = longArrayOf(800, 2_000)
+        const val FIRST_PAGE_SIZE = 25
+        const val PAGE_SIZE = 100
+        const val MAX_PAGES = 11
     }
 }

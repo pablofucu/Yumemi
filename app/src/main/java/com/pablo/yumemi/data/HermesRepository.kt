@@ -3,6 +3,7 @@ package com.pablo.yumemi.data
 import androidx.room.withTransaction
 import com.pablo.yumemi.data.chat.EventMapper
 import com.pablo.yumemi.data.chat.PartCodec
+import com.pablo.yumemi.data.chat.RemoteSession
 import com.pablo.yumemi.data.chat.StreamEvent
 import com.pablo.yumemi.data.chat.TranscriptParser
 import com.pablo.yumemi.data.chat.isCronRun
@@ -35,14 +36,32 @@ class HermesRepository(
     fun observeThread(id: String): Flow<ChatThread?> =
         threadDao.observe(id).map { it?.toDomain() }
 
-    suspend fun refreshThreads() {
+    /**
+     * Syncs the thread list with the server. Each page is stored as it arrives ([onFirstPage] runs
+     * after the first one); threads gone from the server are removed only once the listing is complete.
+     */
+    suspend fun refreshThreads(onFirstPage: () -> Unit = {}) {
+        var first = true
         // Cron runs are sessions too; they live in the Resultados tab, not among the chats.
-        val remote = client.listSessions().filterNot { it.isCronRun() }
+        val remote = client.listSessions { page ->
+            upsertThreads(page.filterNot { it.isCronRun() })
+            if (first) {
+                first = false
+                onFirstPage()
+            }
+        }.filterNot { it.isCronRun() }
+        db.withTransaction {
+            threadDao.deleteNotIn(remote.map { it.id })
+            messageDao.deleteOrphans()
+        }
+    }
+
+    private suspend fun upsertThreads(remote: List<RemoteSession>) {
+        if (remote.isEmpty()) return
         val now = System.currentTimeMillis()
         db.withTransaction {
-            val existing = threadDao.getAll().associateBy { it.id }
             val rows = remote.map { r ->
-                val old = existing[r.id]
+                val old = threadDao.get(r.id)
                 ThreadEntity(
                     id = r.id,
                     title = r.title.ifBlank { old?.title.orEmpty() },
@@ -51,8 +70,6 @@ class HermesRepository(
                 )
             }
             threadDao.upsertAll(rows)
-            threadDao.deleteNotIn(rows.map { it.id })
-            messageDao.deleteOrphans()
         }
     }
 
