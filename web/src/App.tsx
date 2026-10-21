@@ -5,14 +5,18 @@ import { isConfigured, settings } from './settings/settingsStore'
 import { useStore } from './state/store'
 import { ChatView } from './ui/ChatView'
 import { ConnectionView } from './ui/ConnectionView'
+import { FeedDetailView, FeedsView } from './ui/FeedsView'
 import { Sprite } from './ui/Sprite'
 import { ThreadList } from './ui/ThreadList'
 
-type Route = { name: 'list' } | { name: 'chat'; id: string } | { name: 'connection' }
+type Route = { name: 'list' } | { name: 'chat'; id: string } | { name: 'connection' } | { name: 'feeds' } | { name: 'feed'; tag: string }
 
 function parseHash(hash: string): Route {
   const h = hash.replace(/^#\/?/, '')
   if (h === 'connection') return { name: 'connection' }
+  if (h === 'feeds') return { name: 'feeds' }
+  const f = /^feeds\/([a-z0-9_-]+)$/.exec(h)
+  if (f) return { name: 'feed', tag: f[1] }
   const m = /^chat\/(.+)$/.exec(h)
   if (m) {
     try {
@@ -63,11 +67,14 @@ export function App() {
             selectedId={route.name === 'chat' ? route.id : null}
             onOpenChat={(id) => navigate(id ? `#/chat/${encodeURIComponent(id)}` : '#/')}
             onOpenSettings={() => navigate('#/connection')}
+            onOpenFeeds={() => navigate('#/feeds')}
           />
         )}
       </aside>
       <main className="pane-main">
         {route.name === 'chat' && <ChatView key={route.id} threadId={route.id} onBack={() => navigate('#/')} />}
+        {route.name === 'feeds' && <FeedsView onBack={() => navigate('#/')} onOpen={(tag) => navigate(`#/feeds/${tag}`)} />}
+        {route.name === 'feed' && <FeedDetailView key={route.tag} tag={route.tag} onBack={() => navigate('#/feeds')} />}
         {route.name === 'connection' && (
           <ConnectionView
             key={configured ? 'cfg' : 'new'}

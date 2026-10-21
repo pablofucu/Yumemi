@@ -5,7 +5,7 @@ import { threadList } from '../state/threadList'
 import type { ChatThread, ThreadActivity } from '../domain'
 import { useThreadList } from '../state/threadList'
 import { ConfirmDialog, RenameDialog } from './Dialogs'
-import { IconHeart, IconMore, IconPlus, IconRefresh, IconSettings } from './icons'
+import { IconHeart, IconMore, IconPlus, IconRefresh, IconSettings, IconTimeline } from './icons'
 import { Sprite } from './Sprite'
 import { connectionLabel } from './StatusPanel'
 import { ThemeButton } from './Theme'
@@ -159,10 +159,12 @@ export function ThreadList({
   selectedId,
   onOpenChat,
   onOpenSettings,
+  onOpenFeeds,
 }: {
   selectedId: string | null
   onOpenChat: (id: string) => void
   onOpenSettings: () => void
+  onOpenFeeds: () => void
 }) {
   const ui = useThreadList()
   const [filter, setFilter] = useState<Filter>('all')
@@ -220,6 +222,9 @@ export function ThreadList({
         </div>
         <button type="button" className="icon-btn" onClick={() => threadList.refresh()} aria-label="Actualizar" title="Actualizar">
           <IconRefresh className={ui.isRefreshing ? 'spin' : ''} />
+        </button>
+        <button type="button" className="icon-btn" onClick={onOpenFeeds} aria-label="Informes" title="Informes">
+          <IconTimeline />
         </button>
         <ThemeButton />
         <button type="button" className="icon-btn" onClick={onOpenSettings} aria-label="Conexión" title="Conexión">

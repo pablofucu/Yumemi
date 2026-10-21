@@ -10,12 +10,15 @@ export type Settings = {
   remember: boolean
   /** Advanced: stream through /v1/chat/completions instead of runs / session chat. */
   useChatCompletions: boolean
+  /** Advanced: address of the automation feeds; empty = /feeds next to Hermes. */
+  feedsUrl: string
 }
 
 const K_URL = 'yumemi.baseUrl'
 const K_KEY = 'yumemi.apiKey'
 const K_REMEMBER = 'yumemi.remember'
 const K_CC = 'yumemi.useChatCompletions'
+const K_FEEDS = 'yumemi.feedsUrl'
 export const PREFIX = 'yumemi.'
 
 type Kind = 'local' | 'session'
@@ -76,6 +79,7 @@ function load(): Settings {
     apiKey: key,
     remember,
     useChatCompletions: storageGet('local', K_CC) === 'true',
+    feedsUrl: storageGet('local', K_FEEDS) ?? '',
   }
 }
 
@@ -93,10 +97,11 @@ export function isConfigured(s: Settings = settings.get()): boolean {
 export function saveSettings(next: Settings): void {
   const prev = settings.get()
   const baseUrl = normalizeBaseUrl(next.baseUrl, { pageIsHttps: typeof location !== 'undefined' && location.protocol === 'https:' })
-  const clean: Settings = { ...next, baseUrl, apiKey: next.apiKey.trim() }
+  const clean: Settings = { ...next, baseUrl, apiKey: next.apiKey.trim(), feedsUrl: next.feedsUrl.trim().replace(/\/+$/, '') }
   storageSet('local', K_URL, clean.baseUrl)
   storageSet('local', K_REMEMBER, String(clean.remember))
   storageSet('local', K_CC, String(clean.useChatCompletions))
+  storageSet('local', K_FEEDS, clean.feedsUrl)
   if (clean.remember) {
     storageSet('local', K_KEY, clean.apiKey)
     storageRemove('session', K_KEY)
@@ -111,7 +116,7 @@ export function saveSettings(next: Settings): void {
 
 function clearCaches(kind: Kind): void {
   for (const k of storageKeys(kind, PREFIX)) {
-    if (k === K_URL || k === K_REMEMBER || k === K_CC || k === K_KEY || k === 'yumemi.pins' || k === 'yumemi.theme') continue
+    if (k === K_URL || k === K_REMEMBER || k === K_CC || k === K_FEEDS || k === K_KEY || k === 'yumemi.pins' || k === 'yumemi.theme') continue
     storageRemove(kind, k)
   }
 }
@@ -121,5 +126,5 @@ export function forgetEverything(): void {
   for (const kind of ['local', 'session'] as const) {
     for (const k of storageKeys(kind, PREFIX)) storageRemove(kind, k)
   }
-  settings.set({ baseUrl: '', apiKey: '', remember: true, useChatCompletions: false })
+  settings.set({ baseUrl: '', apiKey: '', remember: true, useChatCompletions: false, feedsUrl: '' })
 }

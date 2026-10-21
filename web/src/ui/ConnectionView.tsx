@@ -1,6 +1,7 @@
 // Connection screen (port of ui/settings/SettingsScreen.kt for the web).
 import { useState } from 'react'
 import { client, repo } from '../services'
+import { feedRepo } from '../data/feeds'
 import { threadList } from '../state/threadList'
 import { pageProtocol } from '../api/errors'
 import type { ConnectionState } from '../domain'
@@ -32,6 +33,7 @@ export function ConnectionView({ onDone, canGoBack }: { onDone: () => void; canG
   const [apiKey, setApiKey] = useState(saved.apiKey)
   const [remember, setRemember] = useState(saved.remember)
   const [useCC, setUseCC] = useState(saved.useChatCompletions)
+  const [feedsUrl, setFeedsUrl] = useState(saved.feedsUrl)
   const [result, setResult] = useState<ConnectionState>({ kind: 'unknown' })
   const [forgetting, setForgetting] = useState(false)
 
@@ -51,8 +53,9 @@ export function ConnectionView({ onDone, canGoBack }: { onDone: () => void; canG
   }
 
   const save = () => {
-    saveSettings({ baseUrl, apiKey, remember, useChatCompletions: useCC })
+    saveSettings({ baseUrl, apiKey, remember, useChatCompletions: useCC, feedsUrl })
     repo.reset()
+    feedRepo.reset()
     threadList.configChanged()
     void client.prewarm()
     onDone()
@@ -155,6 +158,21 @@ export function ConnectionView({ onDone, canGoBack }: { onDone: () => void; canG
                 <small>Transporte alternativo (/v1/chat/completions). Sin aprobaciones ni parada de ejecución.</small>
               </span>
             </label>
+            <label className="label" htmlFor="feeds-url">
+              Dirección de los informes
+            </label>
+            <input
+              id="feeds-url"
+              className="field"
+              type="url"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="Vacío = la dirección de Hermes + /feeds"
+              value={feedsUrl}
+              onChange={(e) => setFeedsUrl(e.target.value)}
+            />
           </details>
 
           {r && (
@@ -209,6 +227,8 @@ export function ConnectionView({ onDone, canGoBack }: { onDone: () => void; canG
             setApiKey('')
             setRemember(true)
             setUseCC(false)
+            setFeedsUrl('')
+            feedRepo.reset()
             setResult({ kind: 'unknown' })
             threadList.configChanged()
           }}
