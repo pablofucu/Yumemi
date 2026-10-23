@@ -5,10 +5,12 @@ import androidx.room.Room
 import com.pablo.yumemi.data.HermesRepository
 import com.pablo.yumemi.data.cron.CronRepository
 import com.pablo.yumemi.data.chat.TurnRunner
+import com.pablo.yumemi.data.feeds.FeedRepository
 import com.pablo.yumemi.data.local.YumemiDatabase
 import com.pablo.yumemi.data.remote.HermesClient
 import com.pablo.yumemi.data.remote.NetworkMonitor
 import com.pablo.yumemi.data.settings.SettingsStore
+import com.pablo.yumemi.data.update.AppUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +29,8 @@ class AppContainer(context: Context) {
     }
     val repository: HermesRepository by lazy { HermesRepository(client, database, settings) }
     val cronRepository: CronRepository by lazy { CronRepository(client, appContext, database.cronResultDao()) }
+    val feedRepository: FeedRepository by lazy { FeedRepository(client, settings, appContext) }
+    val updater: AppUpdater by lazy { AppUpdater(appContext) }
     /** Registered once for the process lifetime, never unregistered. */
     val networkMonitor: NetworkMonitor by lazy { NetworkMonitor(appContext) }
 

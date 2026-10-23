@@ -1,0 +1,47 @@
+name: Release firmada
+
+# Empujar un tag vX.Y.Z publica un Release con el APK firmado; la app lo detecta y se actualiza.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Restaurar keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.YUMEMI_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: Compilar APK firmado
+        env:
+          YUMEMI_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          YUMEMI_KEYSTORE_PASSWORD: ${{ secrets.YUMEMI_KEYSTORE_PASSWORD }}
+          YUMEMI_KEY_ALIAS: ${{ secrets.YUMEMI_KEY_ALIAS }}
+          YUMEMI_KEY_PASSWORD: ${{ secrets.YUMEMI_KEY_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          VERSION="${GITHUB_REF_NAME#v}"
+          ./gradlew assembleRelease -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER" --console=plain
+
+      - name: Publicar Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cp app/build/outputs/apk/release/app-release.apk "yumemi-$VERSION.apk"
+          gh release create "$GITHUB_REF_NAME" "yumemi-$VERSION.apk" --title "Yumemi $VERSION" --generate-notes --latest

@@ -35,7 +35,9 @@ internal const val UNTITLED = "Conversación nueva"
 /** How often the list checks the server for turns other clients are running. */
 private const val POLL_MS = 10_000L
 /** Threads whose latest message is fetched after each refresh. */
-private const val BACKFILL_LIMIT = 15
+private const val BACKFILL_LIMIT = 6
+/** Between full listings (all pages, cron runs included) a refresh only reads the first page. */
+private const val FULL_SYNC_MS = 5 * 60_000L
 
 internal fun ChatThread.withDisplayTitle(): ChatThread =
     if (title.isNotBlank()) this else copy(title = preview.trim().take(40).ifBlank { UNTITLED })
@@ -84,6 +86,7 @@ class ThreadListViewModel(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThreadListUiState(connection = internal.value.connection))
 
     private var refreshJob: Job? = null
+    private var lastFullSync = 0L
     private var backfillJob: Job? = null
     private var happyJob: Job? = null
 
@@ -102,9 +105,9 @@ class ThreadListViewModel(
         }
     }
 
-    fun refresh() = startRefresh(keepError = false)
+    fun refresh() = startRefresh(keepError = false, forceFull = true)
 
-    private fun startRefresh(keepError: Boolean, retryOnUnreachable: Boolean = false) {
+    private fun startRefresh(keepError: Boolean, retryOnUnreachable: Boolean = false, forceFull: Boolean = false) {
         if (!settings.isConfigured) {
             internal.update { it.copy(connection = ConnectionState.NotConfigured, isRefreshing = false) }
             return
@@ -112,24 +115,30 @@ class ThreadListViewModel(
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             internal.update { it.copy(isRefreshing = true, error = if (keepError) it.error else null) }
-            val failure = refreshOnce()
+            val failure = refreshOnce(forceFull)
             if (failure is HermesException.Unreachable && retryOnUnreachable) {
                 // Startup over a VPN that is still waking up: one more try shortly after.
                 delay(3_000)
                 internal.update { it.copy(isRefreshing = true) }
-                refreshOnce()
+                refreshOnce(forceFull)
             }
         }
     }
 
     /** One refresh attempt; updates the state and returns the failure, if any. */
-    private suspend fun refreshOnce(): Exception? =
+    private suspend fun refreshOnce(forceFull: Boolean): Exception? =
         try {
-            // Connected as soon as the first page is in; the rest of the list keeps syncing.
-            repo.refreshThreads(onFirstPage = {
-                internal.update { it.copy(connection = ConnectionState.Connected, error = null) }
-                flashHappy()
-            })
+            val full = forceFull || System.currentTimeMillis() - lastFullSync > FULL_SYNC_MS
+            if (full) {
+                // Connected (and no spinner) as soon as the first page is in; the rest keeps syncing quietly.
+                repo.refreshThreads(onFirstPage = {
+                    internal.update { it.copy(connection = ConnectionState.Connected, isRefreshing = false, error = null) }
+                    flashHappy()
+                })
+                lastFullSync = System.currentTimeMillis()
+            } else {
+                repo.refreshRecent()
+            }
             internal.update { it.copy(connection = ConnectionState.Connected, isRefreshing = false) }
             backfillLastMessages()
             null
@@ -198,7 +207,7 @@ class ThreadListViewModel(
      */
     suspend fun watchActivity() {
         while (true) {
-            if (settings.isConfigured && internal.value.connection is ConnectionState.Connected) pollActivity()
+            if (settings.isConfigured && internal.value.connection is ConnectionState.Connected && refreshJob?.isActive != true) pollActivity()
             delay(POLL_MS)
         }
     }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.MarkEmailRead
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.Icon
@@ -28,6 +29,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -46,6 +48,8 @@ import com.pablo.yumemi.AppViewModelProvider
 import com.pablo.yumemi.ui.chat.ChatScreen
 import com.pablo.yumemi.ui.cron.CronResultsScreen
 import com.pablo.yumemi.ui.cron.CronScreen
+import com.pablo.yumemi.ui.feeds.FeedDetailScreen
+import com.pablo.yumemi.ui.feeds.FeedsScreen
 import com.pablo.yumemi.ui.settings.SettingsScreen
 import com.pablo.yumemi.ui.settings.SettingsViewModel
 import com.pablo.yumemi.ui.theme.Yu
@@ -57,18 +61,22 @@ object Routes {
     const val SETTINGS = "settings"
     const val CRON = "cron"
     const val RESULTS = "cron_results"
+    const val FEEDS = "feeds"
+    const val FEED = "feed/{tag}"
     fun chat(threadId: String) = "chat/${Uri.encode(threadId)}"
+    fun feed(tag: String) = "feed/${Uri.encode(tag)}"
 }
 
 private const val DUR = 380
 private const val TAB_DUR = 220
 
-private val TAB_ROUTES = setOf(Routes.THREADS, Routes.CRON, Routes.RESULTS)
+private val TAB_ROUTES = setOf(Routes.THREADS, Routes.FEEDS, Routes.CRON, Routes.RESULTS)
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val TABS = listOf(
     Tab(Routes.THREADS, "Chats", Icons.Rounded.Forum),
+    Tab(Routes.FEEDS, "Informes", Icons.Rounded.Insights),
     Tab(Routes.CRON, "Cronjobs", Icons.Rounded.Schedule),
     Tab(Routes.RESULTS, "Resultados", Icons.Rounded.MarkEmailRead),
 )
@@ -83,12 +91,26 @@ private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabExit(): ExitTra
     if (initialState.isTab() && targetState.isTab()) fadeOut(tween(TAB_DUR)) else null
 
 @Composable
-fun YumemiApp() {
+fun YumemiApp(openRoute: String? = null, onRouteOpened: () -> Unit = {}) {
     val nav = rememberNavController()
     val settingsVm: SettingsViewModel = viewModel(factory = AppViewModelProvider.Factory)
     // Decided once, at launch: no URL configured yet -> first-run settings.
     val firstRun = remember { settingsVm.uiState.value.baseUrl.isBlank() }
     val start = if (firstRun) Routes.SETTINGS else Routes.THREADS
+
+    // A tapped notification asks for a screen; open it once the graph exists.
+    LaunchedEffect(openRoute) {
+        if (openRoute != null && !firstRun) {
+            nav.navigate(openRoute) {
+                if (openRoute in TAB_ROUTES) {
+                    popUpTo(Routes.THREADS) { saveState = true }
+                    restoreState = true
+                }
+                launchSingleTop = true
+            }
+        }
+        if (openRoute != null) onRouteOpened()
+    }
 
     val backEntry by nav.currentBackStackEntryAsState()
     val currentRoute = backEntry?.destination?.route
@@ -171,6 +193,21 @@ fun YumemiApp() {
             popExitTransition = { tabExit() },
         ) {
             CronResultsScreen()
+        }
+        composable(
+            route = Routes.FEEDS,
+            enterTransition = { tabEnter() },
+            exitTransition = { tabExit() },
+            popEnterTransition = { tabEnter() },
+            popExitTransition = { tabExit() },
+        ) {
+            FeedsScreen(onOpenFeed = { tag -> nav.navigate(Routes.feed(tag)) })
+        }
+        composable(
+            route = Routes.FEED,
+            arguments = listOf(navArgument("tag") { type = NavType.StringType }),
+        ) {
+            FeedDetailScreen(onBack = { nav.popBackStack() })
         }
         composable(
             route = Routes.CHAT,

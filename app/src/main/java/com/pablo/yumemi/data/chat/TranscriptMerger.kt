@@ -74,6 +74,15 @@ object TranscriptMerger {
                 }
             }
             if (idx >= 0) {
+                // Local turns the server does not know yet and that precede this one keep their place;
+                // left for the tail they would show up after newer messages.
+                for (j in cursor until idx) {
+                    if (!used[j]) {
+                        used[j] = true
+                        lt[j].user?.let { out.add(it) }
+                        lt[j].assistant?.let { out.add(it) }
+                    }
+                }
                 used[idx] = true
                 cursor = idx + 1
                 val l = lt[idx]

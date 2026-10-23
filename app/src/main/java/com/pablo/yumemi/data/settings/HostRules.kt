@@ -56,6 +56,16 @@ object HostRules {
         return s
     }
 
+    /**
+     * Where the automation feeds live by default: /feeds next to the Hermes API (same host and
+     * port, behind the same key). Empty when there is no base URL.
+     */
+    fun defaultFeedsUrl(baseUrl: String): String {
+        val url = normalizeBaseUrl(baseUrl)
+        if (hostOf(url).isEmpty()) return ""
+        return "$url/feeds"
+    }
+
     /** True when the URL is plain http:// and the host is not on a private/Tailscale network. */
     fun isInsecure(input: String): Boolean {
         val url = normalizeBaseUrl(input)

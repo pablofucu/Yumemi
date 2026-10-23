@@ -61,9 +61,9 @@ class HermesRepository(
         if (remote.isEmpty()) return
         val now = System.currentTimeMillis()
         db.withTransaction {
-            val rows = remote.map { r ->
+            val rows = remote.mapNotNull { r ->
                 val old = threadDao.get(r.id)
-                ThreadEntity(
+                val row = ThreadEntity(
                     id = r.id,
                     title = r.title.ifBlank { old?.title.orEmpty() },
                     updatedAt = if (r.updatedAt > 0) r.updatedAt else (old?.updatedAt ?: now),
@@ -74,8 +74,10 @@ class HermesRepository(
                     source = r.source ?: old?.source,
                     pinned = old?.pinned ?: false,
                 )
+                // Unchanged rows are not rewritten: each write re-emits (and recomposes) the whole list.
+                if (row == old) null else row
             }
-            threadDao.upsertAll(rows)
+            if (rows.isNotEmpty()) threadDao.upsertAll(rows)
         }
     }
 

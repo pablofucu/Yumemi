@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pablo.yumemi.AppViewModelProvider
+import com.pablo.yumemi.data.update.UpdateState
 import com.pablo.yumemi.domain.ConnectionState
 import com.pablo.yumemi.domain.YumemiMood
 import com.pablo.yumemi.ui.sprite.YumemiSprite
@@ -79,6 +80,7 @@ fun SettingsScreen(
     val vm: SettingsViewModel = viewModel(factory = AppViewModelProvider.Factory)
     val state by vm.uiState.collectAsStateWithLifecycle()
     val useChat by vm.useChatCompletions.collectAsStateWithLifecycle()
+    val feedsUrl by vm.feedsUrl.collectAsStateWithLifecycle()
 
     // Fire onSaved only for a false -> true transition seen while this screen is shown.
     var seenNotSaved by remember { mutableStateOf(!state.saved) }
@@ -223,6 +225,32 @@ fun SettingsScreen(
                 }
 
                 SoftCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = feedsUrl,
+                            onValueChange = vm::onFeedsUrlChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("URL de informes (opcional)") },
+                            placeholder = {
+                                Text(vm.defaultFeedsUrl().ifBlank { "https://tu-vm.ts.net/feeds" })
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Uri,
+                                imeAction = ImeAction.Done,
+                            ),
+                        )
+                        Text(
+                            "Donde Hermes publica los feeds de sus automatizaciones. " +
+                                "Vacío: junto a la API de Hermes, en /feeds, con la misma clave.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Yu.Muted,
+                        )
+                    }
+                }
+
+                SoftCard(Modifier.fillMaxWidth()) {
                     Row(
                         Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -244,6 +272,8 @@ fun SettingsScreen(
                         Switch(checked = useChat, onCheckedChange = vm::onTransportChange)
                     }
                 }
+
+                UpdateCard(vm)
 
                 Button(
                     onClick = { vm.save() },
@@ -295,5 +325,34 @@ private fun TestResultChip(result: ConnectionState, modifier: Modifier = Modifie
             color = if (result == ConnectionState.Connected) Color(0xFF1F7A60) else color,
             maxLines = 2,
         )
+    }
+}
+
+@Composable
+private fun UpdateCard(vm: SettingsViewModel) {
+    val update by vm.updateState.collectAsStateWithLifecycle()
+    SoftCard(Modifier.fillMaxWidth(), color = Yu.LilacSoft, elevation = 0.dp) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Actualizaciones", style = MaterialTheme.typography.titleSmall, color = Yu.PeriwinkleDeep)
+            Text(
+                when (val u = update) {
+                    is UpdateState.Checking -> "Buscando…"
+                    is UpdateState.UpToDate -> "Versión ${vm.appVersion}: estás al día."
+                    is UpdateState.Available -> "Hay una versión nueva: ${u.info.version} (tienes ${vm.appVersion})."
+                    is UpdateState.Downloading -> "Descargando ${u.info.version}…"
+                    is UpdateState.Failed -> "Error: ${u.message}"
+                    UpdateState.Idle -> "Versión ${vm.appVersion}."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = Yu.Indigo,
+            )
+            val available = (update as? UpdateState.Available)?.info
+            FilledTonalButton(
+                onClick = { if (available != null) vm.installUpdate(available) else vm.checkUpdate() },
+                enabled = update !is UpdateState.Checking && update !is UpdateState.Downloading,
+            ) {
+                Text(if (available != null) "Descargar e instalar" else "Buscar actualizaciones")
+            }
+        }
     }
 }

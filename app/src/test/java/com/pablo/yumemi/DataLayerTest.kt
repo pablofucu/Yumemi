@@ -145,6 +145,22 @@ class DataLayerTest {
     }
 
     @Test
+    fun mergerKeepsLocalOnlyTurnsBeforeLaterServerTurns() {
+        val server = listOf(
+            ChatMessage("s1", Role.USER, listOf(MessagePart.Text("b")), 0),
+            ChatMessage("s2", Role.ASSISTANT, listOf(MessagePart.Text("rb")), 0),
+        )
+        val local = listOf(
+            ChatMessage("l1", Role.USER, listOf(MessagePart.Text("a")), 1),
+            ChatMessage("l2", Role.ASSISTANT, listOf(MessagePart.Text("ra")), 2),
+            ChatMessage("l3", Role.USER, listOf(MessagePart.Text("b")), 3),
+            ChatMessage("l4", Role.ASSISTANT, listOf(MessagePart.Text("rb")), 4),
+        )
+        val merged = TranscriptMerger.merge(server, local)
+        assertEquals(listOf("l1", "l2", "l3", "l4"), merged.map { it.id })
+    }
+
+    @Test
     fun partCodecRoundTrip() {
         val parts = listOf(
             MessagePart.Text("a"),

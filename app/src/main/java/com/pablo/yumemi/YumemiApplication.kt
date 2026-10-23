@@ -10,5 +10,7 @@ class YumemiApplication : Application() {
         super.onCreate()
         container = AppContainer(this)
         container.warmUp()
+        com.pablo.yumemi.notify.NotifyWorker.schedule(this)
+        com.pablo.yumemi.notify.UpdateWorker.schedule(this)
     }
 }

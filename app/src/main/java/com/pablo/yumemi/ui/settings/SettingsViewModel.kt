@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.pablo.yumemi.data.remote.HermesClient
 import com.pablo.yumemi.data.settings.HostRules
 import com.pablo.yumemi.data.settings.SettingsStore
+import com.pablo.yumemi.data.update.AppUpdater
+import com.pablo.yumemi.data.update.UpdateInfo
+import com.pablo.yumemi.data.update.UpdateState
 import com.pablo.yumemi.domain.ConnectionState
 import com.pablo.yumemi.domain.SettingsUiState
 import kotlinx.coroutines.Job
@@ -17,6 +20,7 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(
     private val client: HermesClient,
     private val settings: SettingsStore,
+    private val updater: AppUpdater,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -30,6 +34,29 @@ class SettingsViewModel(
 
     /** Extra (not in Contract.kt): true = POST /v1/chat/completions transport, false = sessions API. */
     val useChatCompletions: StateFlow<Boolean> = settings.useChatCompletions
+
+    /** Extra (not in Contract.kt): feeds URL as typed; empty = derived from the Hermes URL. */
+    private val _feedsUrl = MutableStateFlow(settings.feedsUrlOverride.value)
+    val feedsUrl: StateFlow<String> = _feedsUrl.asStateFlow()
+
+    fun onFeedsUrlChange(v: String) {
+        _feedsUrl.value = v
+        _uiState.update { it.copy(saved = false) }
+    }
+
+    /** What an empty feeds field means for the URL being edited. */
+    fun defaultFeedsUrl(): String = HostRules.defaultFeedsUrl(_uiState.value.baseUrl)
+
+    val updateState: StateFlow<UpdateState> = updater.state
+    val appVersion: String = updater.currentVersion
+
+    fun checkUpdate() {
+        viewModelScope.launch { updater.check() }
+    }
+
+    fun installUpdate(info: UpdateInfo) {
+        viewModelScope.launch { updater.downloadAndInstall(info) }
+    }
 
     private var testJob: Job? = null
 
@@ -73,6 +100,8 @@ class SettingsViewModel(
     fun save() {
         val s = _uiState.value
         settings.save(s.baseUrl, s.apiKey)
+        settings.saveFeedsUrl(_feedsUrl.value)
+        _feedsUrl.value = settings.feedsUrlOverride.value
         _uiState.update {
             it.copy(
                 baseUrl = settings.baseUrl.value,

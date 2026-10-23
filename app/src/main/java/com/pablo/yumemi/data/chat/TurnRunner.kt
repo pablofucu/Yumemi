@@ -10,6 +10,10 @@ import com.pablo.yumemi.data.remote.parseJsonObject
 import com.pablo.yumemi.data.remote.str
 import com.pablo.yumemi.data.remote.toUserMessage
 import com.pablo.yumemi.data.settings.SettingsStore
+import com.pablo.yumemi.notify.AppVisibility
+import com.pablo.yumemi.notify.Notifier
+import com.pablo.yumemi.notify.SeenStore
+import com.pablo.yumemi.ui.Routes
 import com.pablo.yumemi.domain.ApprovalStatus
 import com.pablo.yumemi.domain.ChatMessage
 import com.pablo.yumemi.domain.MessagePart
@@ -289,6 +293,7 @@ class TurnRunner(
                         // Persisting is best effort.
                     }
                 }
+                if (succeeded && !AppVisibility.visible) notifyReply(threadId, finalMsg)
                 clearPending(threadId)
                 active.remove(threadId, a)
                 if (active.isEmpty()) TurnService.setRunning(appContext, false)
@@ -301,6 +306,19 @@ class TurnRunner(
                     message = finalMsg,
                 )
             }
+        }
+    }
+
+    /** The app is in the background: tell the user their answer is ready. */
+    private suspend fun notifyReply(threadId: String, message: ChatMessage) {
+        val text = ThreadActivityRules.snippetOf(message)
+        if (text.isEmpty()) return
+        try {
+            SeenStore(appContext).markChatHandled(threadId)
+            val title = repo.rawTitle(threadId).orEmpty()
+            Notifier.chat(appContext, threadId, title, text, Routes.chat(threadId))
+        } catch (e: Exception) {
+            // Best effort.
         }
     }
 

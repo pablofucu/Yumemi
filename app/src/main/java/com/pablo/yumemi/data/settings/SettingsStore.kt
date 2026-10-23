@@ -18,12 +18,20 @@ class SettingsStore(context: Context) {
 
     private val _baseUrl = MutableStateFlow(prefs.getString(KEY_URL, "").orEmpty())
     private val _apiKey = MutableStateFlow(prefs.getString(KEY_KEY, "").orEmpty())
+    private val _feedsUrlOverride = MutableStateFlow(prefs.getString(KEY_FEEDS, "").orEmpty())
     private val _useChatCompletions = MutableStateFlow(prefs.getString(KEY_TRANSPORT, TRANSPORT_SESSIONS) == TRANSPORT_CHAT)
 
     val baseUrl: StateFlow<String> = _baseUrl.asStateFlow()
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
     /** false = SESSIONS (default, /api/sessions/{id}/chat/stream); true = CHAT_COMPLETIONS. */
     val useChatCompletions: StateFlow<Boolean> = _useChatCompletions.asStateFlow()
+
+    /** Feeds URL typed by the user; empty = derived from [baseUrl]. */
+    val feedsUrlOverride: StateFlow<String> = _feedsUrlOverride.asStateFlow()
+
+    /** Base of the automation feeds (…/feeds), without trailing slash. */
+    val feedsUrl: String
+        get() = _feedsUrlOverride.value.ifBlank { HostRules.defaultFeedsUrl(_baseUrl.value) }
 
     val isConfigured: Boolean get() = _baseUrl.value.isNotBlank()
 
@@ -33,6 +41,12 @@ class SettingsStore(context: Context) {
         prefs.edit().putString(KEY_URL, url).putString(KEY_KEY, key).apply()
         _baseUrl.value = url
         _apiKey.value = key
+    }
+
+    fun saveFeedsUrl(url: String) {
+        val v = HostRules.normalizeBaseUrl(url)
+        prefs.edit().putString(KEY_FEEDS, v).apply()
+        _feedsUrlOverride.value = v
     }
 
     fun setUseChatCompletions(value: Boolean) {
@@ -45,6 +59,7 @@ class SettingsStore(context: Context) {
         const val KEY_URL = "base_url"
         const val KEY_KEY = "api_key"
         const val KEY_TRANSPORT = "transport"
+        const val KEY_FEEDS = "feeds_url"
         const val TRANSPORT_SESSIONS = "SESSIONS"
         const val TRANSPORT_CHAT = "CHAT_COMPLETIONS"
 

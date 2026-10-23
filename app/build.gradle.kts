@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -8,6 +9,12 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Release signing: keystore.properties locally, YUMEMI_* environment variables in CI.
+val keystoreProps = Properties().apply {
+    rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+fun signingValue(prop: String, env: String): String? = keystoreProps.getProperty(prop) ?: System.getenv(env)
+
 android {
     namespace = "com.pablo.yumemi"
     compileSdk = 35
@@ -16,14 +23,27 @@ android {
         applicationId = "com.pablo.yumemi"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.0"
+        // CI passes -PversionCode / -PversionName derived from the release tag.
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 2
+        versionName = (project.findProperty("versionName") as String?) ?: "0.1.0"
+    }
+
+    signingConfigs {
+        val storePath = signingValue("storeFile", "YUMEMI_KEYSTORE_FILE")
+        if (storePath != null) {
+            create("release") {
+                storeFile = file(storePath)
+                storePassword = signingValue("storePassword", "YUMEMI_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "YUMEMI_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "YUMEMI_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            // Same key as debug builds (this machine's debug.keystore) so each APK installs over the previous one.
-            signingConfig = signingConfigs.getByName("debug")
+            // Own release key: every update must be signed with it to install over the previous APK.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -86,6 +106,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.security.crypto)
 
+    implementation(libs.androidx.work.runtime)
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.kotlinx.serialization.json)
